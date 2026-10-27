@@ -15,7 +15,7 @@ import unittest
 import test_background_suspend as fixtures
 from test_background_suspend import Lines, app
 
-HELPER = Path(__file__).with_name('wayland_idle.py')
+HELPER = Path(__file__).resolve().parent.parent / 'wayland_idle.py'
 
 
 def uint(value):
@@ -320,7 +320,8 @@ def fake_mutter():
 @unittest.skipUnless(os.environ.get('BACKGROUND_SUSPEND_WAYLAND_TEST_BUS'), 'runs in private bus test')
 class MutterTests(unittest.TestCase):
     def spawn(self, command):
-        process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        process = subprocess.Popen(command, cwd=HELPER.parent, stdin=subprocess.PIPE,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
         def close():
             process.terminate()
@@ -369,7 +370,7 @@ class IsolatedMutterTests(unittest.TestCase):
         result = subprocess.run(['dbus-run-session', '--', sys.executable, '-m', 'unittest',
                                  '-v', 'test_wayland_idle.MutterTests'],
                                 env={**os.environ, 'BACKGROUND_SUSPEND_WAYLAND_TEST_BUS': '1'},
-                                cwd=HELPER.parent, capture_output=True, text=True, timeout=25)
+                                cwd=Path(__file__).parent, capture_output=True, text=True, timeout=25)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 

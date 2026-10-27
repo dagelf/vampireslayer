@@ -43,7 +43,7 @@ Also see the graphic equalizer and audio pause/cycle hotkeys linked in the READM
 - Uses the compositor's libwayland-client on Wayland; no privileged input-device access.
 - MIT license; original generated preview.png and hand-authored monochrome pixel glyphs.
 - Does not overwrite user configuration, install packages, or run sudo.
-- Tested with private Wayland/Mutter/MPRIS fixtures and disposable app processes; manifest validation and QML lint pass. Live Omarchy/Hyprland activation, Gaming/media behavior, and editor gestures were tested through WayVNC; see VALIDATION.md.
+- Tested with private Wayland/Mutter/MPRIS fixtures and disposable app processes; manifest validation and QML lint pass. Live Omarchy/Hyprland activation, Gaming/media behavior, and editor gestures were tested through WayVNC; see [validation notes](VALIDATION.md).
 - A disposable systemd service verifies normal-stop and forced-exit cleanup.
 
 Submission: https://github.com/omacom/omarchy-plugin-marketplace/issues/13061

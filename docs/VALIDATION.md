@@ -17,9 +17,11 @@ Live testing found and corrected two integration differences that an isolated co
 
 ## Automated checks
 
+Run these commands from the repository root.
+
 ```sh
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest test_background_suspend test_wayland_idle test_plugin test_gaming
-VAMPIRESLAYER_TEST_SYSTEMD=1 python3 -m unittest test_plugin
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
+VAMPIRESLAYER_TEST_SYSTEMD=1 python3 -m unittest discover -s tests -p 'test_plugin.py'
 python3 tests/qml_smoke.py  # On Omarchy; fake backend, private D-Bus, offscreen window
 omarchy plugin validate .
 ```

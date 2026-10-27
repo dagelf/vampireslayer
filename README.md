@@ -355,7 +355,7 @@ ignore list, and optional worker exceptions available.
 ## Verification
 
 ```sh
-PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -m unittest -v test_background_suspend test_wayland_idle test_plugin test_gaming
+PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -m unittest discover -s tests -v
 ```
 
 Tests use disposable app-named Python processes, synthetic input connections, and
@@ -367,7 +367,7 @@ service.
 
 
 For an optional live systemd check, run
-`VAMPIRESLAYER_TEST_SYSTEMD=1 python3 -m unittest test_plugin`. It creates a
+`VAMPIRESLAYER_TEST_SYSTEMD=1 python3 -m unittest discover -s tests -p 'test_plugin.py'`. It creates a
 disposable waiting Python service and verifies cleanup after stop and forced exit.
 
 The Omarchy manifest follows the [official development guide](https://plugins.omarchy.org/develop.html)
@@ -377,9 +377,9 @@ The repository is licensed under [MIT](LICENSE).
 
 On an Omarchy installation, `python3 tests/qml_smoke.py` exercises mode cycling
 and editor gestures in a private offscreen shell with a fake backend.
-Live VNC validation is recorded in [VALIDATION.md](VALIDATION.md).
+Live VNC validation is recorded in [validation notes](docs/VALIDATION.md).
 
-See [artwork notes](ARTWORK.md) for the banner’s generation prompt and marketplace references.
+See [artwork notes](docs/ARTWORK.md) for the banner’s generation prompt and marketplace references.
 
 PS This Plugin just packaged my normal arch tooling, check [utils](https://github.com/dagelf/utils), in tribute to DHH's Lex Fridman podcast.
 

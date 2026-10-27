@@ -11,7 +11,7 @@ import uuid
 import unittest
 from unittest import mock
 
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).resolve().parent.parent
 loader = importlib.machinery.SourceFileLoader('plugin_service', str(ROOT / 'plugin-service'))
 spec = importlib.util.spec_from_loader(loader.name, loader)
 service = importlib.util.module_from_spec(spec)

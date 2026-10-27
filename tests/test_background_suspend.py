@@ -1,4 +1,4 @@
-"""Run with /usr/bin/python3 -m unittest -v test_background_suspend.
+"""Run with /usr/bin/python3 -m unittest discover -s tests -p 'test_background_suspend.py' -v.
 
 Uses a private D-Bus session and disposable browser-named processes, never the
 desktop's browsers. No network or desktop display is needed.
@@ -17,7 +17,7 @@ import time
 import unittest
 from unittest import mock
 
-SCRIPT = Path(__file__).with_name('background-suspend')
+SCRIPT = Path(__file__).resolve().parent.parent / 'background-suspend'
 loader = importlib.machinery.SourceFileLoader('background_suspend', str(SCRIPT))
 spec = importlib.util.spec_from_loader(loader.name, loader)
 app = importlib.util.module_from_spec(spec)
@@ -330,6 +330,7 @@ class WorkerWatchTests(unittest.TestCase):
         editor = self.browser(display, 'code', 'node')
         other = self.browser(display, 'chromium')
         watcher = subprocess.Popen([sys.executable, '-c', WATCH_TEST_CODE],
+                                   cwd=Path(__file__).parent,
                                    env={**x11_test_env(display),
                                         'TEST_WORKERS': '1', 'TEST_NO_MEDIA': '1'},
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -395,7 +396,8 @@ class MediaBusTests(unittest.TestCase):
                                     executable=sys.executable, env=env)
         # Exercise the real selector loop and media subprocess. Supply a quiet
         # XInput connection and scope every signal to disposable test processes.
-        watcher, _ = self.start_process([sys.executable, '-c', WATCH_TEST_CODE], env=env)
+        watcher, _ = self.start_process([sys.executable, '-c', WATCH_TEST_CODE], env=env,
+                                        cwd=Path(__file__).parent)
         self.assert_state([idle.pid], True)
         self.assert_state([pid], False)
         children = Path(f'/proc/{watcher.pid}/task/{watcher.pid}/children').read_text().split()
@@ -463,7 +465,7 @@ class IsolatedBusTests(unittest.TestCase):
                                  '-v', 'test_background_suspend.MediaBusTests'],
                                 env={**os.environ, 'BACKGROUND_SUSPEND_TEST_BUS': '1'},
                                 capture_output=True, text=True, timeout=25,
-                                cwd=SCRIPT.parent)
+                                cwd=Path(__file__).parent)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
