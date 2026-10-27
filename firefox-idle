@@ -3,11 +3,15 @@
 
 Uses XInput events; no keys or coordinates are stored. XTEST input is ignored.
 Each display controls only Firefox processes with that DISPLAY environment.
+Automatic suspension exempts Firefox instances reporting MPRIS Playing, including
+their child processes. Paused/stopped players are not exempt. Requires python3-dbus
+and python3-gi; media not exposed through MPRIS cannot be detected.
 gaming freezes immediately and ignores input; start resumes automatic mode.
 stop disables automatic mode and resumes Firefox.
 """
 import argparse
 import ctypes
+import json
 import os
 from pathlib import Path
 import re
@@ -15,13 +19,16 @@ import selectors
 import signal
 import stat
 import subprocess
+import sys
 import time
 
 SERVICE = 'firefox-idle.service'
 XSOCKETS = Path('/tmp/.X11-unix')
 
 
-def firefox_signal(name, display=None):
+def firefox_signal(name, display=None, playing=None):
+    if name == 'SIGSTOP' and playing is not None:
+        return suspend_except(display, playing)
     # Match argv[0], including renamed content processes, but not firefox-idle
     # or commands merely mentioning Firefox. pkill handles PID identities.
     scope = [] if display is None else ['--env', f'DISPLAY={display}']
@@ -29,6 +36,165 @@ def firefox_signal(name, display=None):
                              *scope, '-f', r'^([^ ]*/)?firefox( |$)'], check=False)
     if result.returncode not in (0, 1):  # 1 includes Firefox not running.
         raise RuntimeError(f'pkill {name} failed: {result.returncode}')
+
+
+def suspend_except(display, playing):
+    """Signal whole Firefox families; pin identities against PID reuse."""
+    processes = {}
+    try:
+        for path in Path('/proc').iterdir():
+            if not path.name.isdigit():
+                continue
+            fd = None
+            try:
+                if path.stat().st_uid != os.getuid():
+                    continue
+                pid = int(path.name)
+                fd = os.pidfd_open(pid)
+                argv0 = path.joinpath('cmdline').read_bytes().split(b'\0', 1)[0]
+                if not re.fullmatch(rb'([^ ]*/)?firefox(?: .*)?', argv0):
+                    continue
+                env = path.joinpath('environ').read_bytes().split(b'\0')
+                if display is not None and os.fsencode(f'DISPLAY={display}') not in env:
+                    continue
+                # comm may contain spaces or parentheses; PPID follows its final ')'.
+                ppid = int(path.joinpath('stat').read_text().rsplit(')', 1)[1].split()[1])
+                processes[pid] = (ppid, fd)
+                fd = None
+            except (FileNotFoundError, ProcessLookupError, PermissionError):
+                pass
+            finally:
+                if fd is not None:
+                    os.close(fd)
+        protected = set(playing)
+
+        def is_playing(pid):
+            ancestors = set()
+            while pid in processes and pid not in ancestors:
+                if pid in protected:
+                    protected.update(ancestors)
+                    return True
+                ancestors.add(pid)
+                pid = processes[pid][0]
+            return False
+
+        for pid, (_, fd) in processes.items():
+            try:
+                signal.pidfd_send_signal(fd, signal.SIGCONT if is_playing(pid) else signal.SIGSTOP)
+            except ProcessLookupError:
+                pass
+    finally:
+        for _, fd in processes.values():
+            os.close(fd)
+
+
+def media_watch():
+    """Stream Playing PIDs on changes; isolate D-Bus I/O from input handling."""
+    import dbus
+    from dbus.mainloop.glib import DBusGMainLoop
+    from gi.repository import GLib
+
+    DBusGMainLoop(set_as_default=True)
+    bus = dbus.SessionBus()
+    daemon = dbus.Interface(bus.get_object('org.freedesktop.DBus', '/org/freedesktop/DBus'),
+                            'org.freedesktop.DBus')
+    loop = GLib.MainLoop()
+    prefix = 'org.mpris.MediaPlayer2.firefox.'
+    interface = 'org.mpris.MediaPlayer2.Player'
+    players = {}
+    last = object()
+    failed = False
+    starting = True
+
+    def publish():
+        nonlocal last
+        if starting or failed:
+            return
+        active = (None if any(p['status'] is None for p in players.values()) else
+                  sorted({p['pid'] for p in players.values() if p['status'] == 'Playing'}))
+        if active != last:
+            print(json.dumps(active), flush=True)
+            last = active
+
+    def fail(error):
+        nonlocal failed
+        print(f'Media monitoring failed: {error}', file=sys.stderr, flush=True)
+        failed = True
+        loop.quit()
+
+    def query(name, player):
+        # A later signal/removal must win over an outstanding property query.
+        generation = player['generation'] = player['generation'] + 1
+
+        def current():
+            return players.get(name) is player and player['generation'] == generation
+
+        def reply(status):
+            if current():
+                if status not in ('Playing', 'Paused', 'Stopped'):
+                    fail(f'Unexpected playback status: {status}')
+                    return
+                player['status'] = str(status)
+                publish()
+
+        def error(exc):
+            if current():
+                fail(exc)
+
+        obj = bus.get_object(player['owner'], '/org/mpris/MediaPlayer2', introspect=False)
+        obj.Get(interface, 'PlaybackStatus', dbus_interface='org.freedesktop.DBus.Properties',
+                reply_handler=reply, error_handler=error, timeout=3)
+
+    def owner_changed(name, old, new):
+        if not name.startswith(prefix):
+            return
+        players.pop(name, None)
+        if new:
+            try:
+                pid = int(daemon.GetConnectionUnixProcessID(new, timeout=3))
+                player = dict(owner=str(new), pid=pid, status=None, generation=0)
+                players[name] = player
+                query(name, player)
+            except dbus.DBusException as error:
+                fail(error)
+        publish()
+
+    def properties_changed(iface, changed, invalidated, sender=None):
+        if iface != interface:
+            return
+        for name, player in list(players.items()):
+            if player['owner'] != sender:
+                continue
+            if 'PlaybackStatus' in changed:
+                status = str(changed['PlaybackStatus'])
+                if status not in ('Playing', 'Paused', 'Stopped'):
+                    fail(f'Unexpected playback status: {status}')
+                    return
+                player['generation'] += 1
+                player['status'] = status
+            elif 'PlaybackStatus' in invalidated:
+                player['status'] = None
+                query(name, player)
+        publish()
+
+    bus.add_signal_receiver(owner_changed, signal_name='NameOwnerChanged',
+                            dbus_interface='org.freedesktop.DBus')
+    bus.add_signal_receiver(properties_changed, signal_name='PropertiesChanged',
+                            dbus_interface='org.freedesktop.DBus.Properties',
+                            path='/org/mpris/MediaPlayer2', sender_keyword='sender')
+    bus.call_on_disconnection(lambda _bus: fail('Session bus disconnected'))
+    for name in bus.list_names():
+        if name.startswith(prefix):
+            try:
+                owner_changed(name, '', bus.get_name_owner(name))
+            except dbus.DBusException as error:
+                if error.get_dbus_name() != 'org.freedesktop.DBus.Error.NameHasNoOwner':
+                    raise
+    starting = False
+    publish()
+    if not failed:
+        loop.run()
+    return 1
 
 
 class Idle:
@@ -41,6 +207,9 @@ class Idle:
 
     def activity(self):
         self.last_input = self.clock()
+        self.resume()
+
+    def resume(self):
         if self.paused:
             self.send('SIGCONT')
             self.paused = False
@@ -53,14 +222,18 @@ class Idle:
         if not self.paused and self.timeout() == 0:
             self.paused = True  # Cleanup must resume even if signalling fails.
             self.send('SIGSTOP')
-            print(f'{self.label} paused', flush=True)
+            print(f'{self.label} idle; non-playing instances paused', flush=True)
+
+    def media_changed(self):
+        if self.paused:
+            self.send('SIGSTOP')  # Reconcile exemptions without resetting input time.
 
 
 class Session:
     """One X server connection owns one display's idle state."""
-    def __init__(self, display, identity, seconds):
+    def __init__(self, display, identity, seconds, playing):
         self.display, self.identity = display, identity
-        self.idle = Idle(seconds, lambda name: firefox_signal(name, display), label=f'Firefox on {display}')
+        self.idle = Idle(seconds, lambda name: firefox_signal(name, display, playing), label=f'Firefox on {display}')
         self.buffer, self.xtest, self.raw = b'', set(), False
         self.ready = False
         self.process = subprocess.Popen(
@@ -118,6 +291,10 @@ def displays():
 
 def watch(seconds):
     sessions = {}
+    playing = set()
+    media = None
+    media_ready = False
+    media_buffer = b''
     libc = ctypes.CDLL(None, use_errno=True)
     notify = libc.inotify_init1(os.O_NONBLOCK | os.O_CLOEXEC)
     if notify < 0:
@@ -128,6 +305,11 @@ def watch(seconds):
             raise OSError(ctypes.get_errno(), 'Cannot watch X display sockets')
         with selectors.DefaultSelector() as selector:
             selector.register(notify, selectors.EVENT_READ)
+            # Restarting automatic mode first releases any previous suspension.
+            firefox_signal('SIGCONT')
+            media = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), 'media-watch'],
+                                     stdout=subprocess.PIPE)
+            selector.register(media.stdout, selectors.EVENT_READ, 'media')
 
             def disconnect(session):
                 if not session.process.stdout.closed:
@@ -142,7 +324,7 @@ def watch(seconds):
                         del sessions[display]
                 for display, identity in current.items():
                     if display not in sessions:
-                        session = Session(display, identity, seconds)
+                        session = Session(display, identity, seconds, playing)
                         sessions[display] = session
                         selector.register(session.process.stdout, selectors.EVENT_READ, session)
                         print(f'Watching display {display}', flush=True)
@@ -150,13 +332,44 @@ def watch(seconds):
             refresh()
             while True:
                 live = [s for s in sessions.values() if s.ready and not s.process.stdout.closed]
-                deadlines = [s.idle.timeout() for s in live if not s.idle.paused]
+                deadlines = [s.idle.timeout() for s in live if media_ready and not s.idle.paused]
                 ready = selector.select(min(deadlines, default=None))
                 if any(key.fd == notify for key, _ in ready):
                     os.read(notify, 65536)
                     refresh()
                     continue  # Discard events from replaced server connections.
                 for key, _ in ready:
+                    if key.data == 'media':
+                        data = os.read(key.fd, 65536)
+                        if not data:
+                            raise RuntimeError('Media watcher ended; automatic suspension disabled')
+                        media_buffer += data
+                        lines = media_buffer.split(b'\n')
+                        media_buffer = lines.pop()
+                        if len(media_buffer) > 65536:
+                            raise ValueError('Oversized media update')
+                        if lines:
+                            pids = json.loads(lines[-1])
+                            if pids is None:
+                                # Unknown is not Playing. Wait for a valid snapshot,
+                                # releasing suspensions without extending idle time.
+                                media_ready = False
+                                for session in live:
+                                    if not session.process.stdout.closed:
+                                        session.idle.resume()
+                                continue
+                            if not isinstance(pids, list) or any(type(p) is not int or p <= 0 for p in pids):
+                                raise ValueError('Invalid media PID list')
+                            changed = playing != set(pids)
+                            playing.clear()
+                            playing.update(pids)
+                            media_ready = True
+                            if changed:
+                                print(f'Media-playing Firefox PIDs: {sorted(playing)}', flush=True)
+                                for session in live:
+                                    if not session.process.stdout.closed:
+                                        session.idle.media_changed()
+                        continue
                     session = key.data
                     try:
                         data = os.read(key.fd, 65536)
@@ -167,21 +380,31 @@ def watch(seconds):
                         disconnect(session)
                         print(f'{session.display}: {error}; resumed. Restart service to reconnect.', flush=True)
                 for session in live:
-                    if not session.process.stdout.closed:
+                    if media_ready and not session.process.stdout.closed:
                         session.idle.expire()
     finally:
         for session in sessions.values():
             session.close()
         os.close(notify)
+        if media is not None:
+            media.terminate()
+            try:
+                media.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                media.kill()
+                media.wait()
+            media.stdout.close()
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('start', 'stop', 'status', 'gaming', 'run', 'resume'), nargs='?', default='status')
+    parser.add_argument('action', choices=('start', 'stop', 'status', 'gaming', 'run', 'resume', 'media-watch'), nargs='?', default='status')
     parser.add_argument('--minutes', type=int, default=15, help='Idle threshold for run (default: 15)')
     args = parser.parse_args()
     if args.minutes <= 0:
         parser.error('--minutes must be positive')
+    if args.action == 'media-watch':
+        return media_watch()
     if args.action == 'resume':
         firefox_signal('SIGCONT')
         return 0
