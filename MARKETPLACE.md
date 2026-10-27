@@ -6,6 +6,8 @@ Category: System
 
 Tags: Power management, Hyprland, System
 
+Preview: `preview.png` (original pixel-art promotional banner)
+
 ## Listing copy
 
 **Vampire Slayer: background browser and app idle suspend**
@@ -19,18 +21,30 @@ suspend even with media. Optional background-worker exceptions preserve jobs you
 want to keep running. Works with Omarchy/Hyprland, compatible Wayland compositors,
 GNOME/Mutter, and X11/VNC. Uses event notifications and systemd user-service cleanup.
 
+Reduce background CPU work to save power and help extend battery life, even
+while watching media. Detected audio/video keeps playing by default, and allowed
+apps on your ignore list continue running. Actual savings depend on your workload.
+
+Click the vampire to cycle Slayer watching, Gaming mode, and Slayer suspended.
+Gaming immediately suspends eligible background app families; double-click opens
+your TOML in the default editor. Monochrome pixel glyphs by default, optional color,
+and documented Hyprland hotkeys through Omarchy IPC. Brought to you by dagelf.
+
 Also see the graphic equalizer and audio pause/cycle hotkeys linked in the README.
 
 ## Maintainer notes
 
-- Headless service plugin; one entry point, no second Quickshell process.
+- Bar widget plus singleton service; no second Quickshell process.
+- Widget uses Omarchy click/drag routing and capability-scoped own-service lookup.
+- Namespaced IPC exposes cycle, gaming, watching, suspended, edit and status.
+- Editor uses omarchy-launch-editor; user config is created exclusively, never overwritten.
 - Starts a transient systemd user unit; disables cleanly and uses ExecStopPost to resume apps.
 - Requires systemd, Python 3.11+, python-dbus, python-gobject; xorg-xinput/coreutils only for X11/VNC.
 - Uses the compositor's libwayland-client on Wayland; no privileged input-device access.
-- MIT license; no preview assets or external artwork.
+- MIT license; original generated preview.png and hand-authored monochrome pixel glyphs.
 - Does not overwrite user configuration, install packages, or run sudo.
 - Detection limits and v1 compositor inhibitors are documented.
-- Tested with private Wayland/Mutter/MPRIS fixtures and disposable app processes; manifest validation and QML lint pass. Live Omarchy shell activation has not been tested in this X11 session.
+- Tested with private Wayland/Mutter/MPRIS fixtures and disposable app processes; manifest validation and QML lint pass. Live Omarchy/Hyprland activation, Gaming/media behavior, and editor gestures were tested through WayVNC; see VALIDATION.md.
 - A disposable systemd service verifies normal-stop and forced-exit cleanup.
 
 Submit using https://github.com/omacom/omarchy-plugin-marketplace/issues/new?template=submit-plugin.yml

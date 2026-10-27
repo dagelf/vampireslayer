@@ -22,7 +22,7 @@ class PluginTests(unittest.TestCase):
     def test_manifest_and_opening(self):
         manifest = json.loads((ROOT / 'manifest.json').read_text())
         self.assertEqual(manifest['id'], 'dagelf.vampireslayer')
-        self.assertEqual(manifest['kinds'], ['service'])
+        self.assertEqual(manifest['kinds'], ['service', 'bar-widget'])
         self.assertTrue((ROOT / manifest['entryPoints']['service']).is_file())
         opening = "Chrome or Firefox eating CPU while you're out for lunch, even when they have nothing to do? Vampire Slayer to the rescue."
         self.assertIn(opening, manifest['description'])
@@ -100,6 +100,38 @@ class PluginTests(unittest.TestCase):
                     marker.unlink()
             finally:
                 subprocess.run(['systemctl', '--user', 'stop', unit], capture_output=True)
+
+    def test_edit_config_preserves_existing_file_and_uses_omarchy_editor(self):
+        with tempfile.TemporaryDirectory() as directory, \
+             mock.patch.dict(os.environ, {'XDG_CONFIG_HOME': directory}), \
+             mock.patch.object(service.os, 'execvp') as launch:
+            service.edit_config()
+            path = Path(directory) / 'vampireslayer/background-suspend.toml'
+            self.assertEqual(path.read_text(), (ROOT / 'background-suspend.toml').read_text())
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            path.write_text('ignore = ["my-app"]\n')
+            service.edit_config()
+            self.assertEqual(path.read_text(), 'ignore = ["my-app"]\n')
+            launch.assert_called_with('omarchy-launch-editor', ['omarchy-launch-editor', str(path)])
+
+    def test_failed_stop_cannot_start_a_second_mode(self):
+        def run(command, **kwargs):
+            if 'is-active' in command:
+                return subprocess.CompletedProcess(command, 3)
+            if 'stop' in command:
+                return subprocess.CompletedProcess(command, 1, '', 'Stop denied')
+            if 'show' in command:
+                return subprocess.CompletedProcess(command, 0, 'loaded\n', '')
+            self.fail('A new service must not start after failed stop')
+        with mock.patch.object(sys, 'argv', ['plugin-service', 'gaming']), \
+             mock.patch.object(service.subprocess, 'run', side_effect=run):
+            with self.assertRaisesRegex(RuntimeError, 'Stop denied'):
+                service.main()
+
+    def test_gaming_runs_managed_backend_with_cleanup(self):
+        command = service.service_command(mode='gaming')
+        self.assertIn('gaming-run', command)
+        self.assertTrue(any(x.startswith('--property=ExecStopPost=') for x in command))
 
     def test_stop_needs_no_checkout_files(self):
         qml = (ROOT / 'Service.qml').read_text()

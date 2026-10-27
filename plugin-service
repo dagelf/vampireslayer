@@ -2,6 +2,7 @@
 """Run the Omarchy plugin under a transient systemd user service."""
 import argparse
 import os
+import json
 from pathlib import Path
 import subprocess
 
@@ -17,7 +18,7 @@ def unit_quote(value):
     return '"' + value.replace('\\', '\\\\').replace('"', '\\"').replace('$', '$$') + '"'
 
 
-def service_command(root=ROOT, env=os.environ):
+def service_command(root=ROOT, env=os.environ, mode="watching"):
     backend = str(root / 'background-suspend')
     return ['systemd-run', '--user', '--unit=' + UNIT, '--collect',
             '--description=Vampire Slayer: background browser and app idle suspend',
@@ -25,24 +26,112 @@ def service_command(root=ROOT, env=os.environ):
             '--property=ExecStopPost=/usr/bin/python3 ' + unit_quote(backend) + ' resume',
             '--expand-environment=no',
             *['--setenv=' + key for key in ENVIRONMENT if env.get(key)],
-            '/usr/bin/python3', backend, 'run', '--minutes', '15']
+            '/usr/bin/python3', backend, 'gaming-run' if mode == 'gaming' else 'run', '--minutes', '15']
+
+
+def edit_config():
+    directory = Path(os.environ.get('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'vampireslayer'
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path = directory / 'background-suspend.toml'
+    default_config = (ROOT / 'background-suspend.toml').read_text()
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        pass
+    else:
+        with os.fdopen(fd, 'w') as stream:
+            stream.write(default_config)
+    # Omarchy handles GUI versus terminal editors and defaults to Neovim.
+    os.execvp('omarchy-launch-editor', ['omarchy-launch-editor', str(path)])
+
+
+def observe():
+    """Report systemd's actual state on D-Bus changes, never on a timer."""
+    import dbus
+    from dbus.mainloop.glib import DBusGMainLoop
+    from gi.repository import GLib
+    DBusGMainLoop(set_as_default=True)
+    bus = dbus.SessionBus()
+    name = 'org.freedesktop.systemd1'
+    manager = dbus.Interface(bus.get_object(name, '/org/freedesktop/systemd1'), name + '.Manager')
+    unit_path = '/org/freedesktop/systemd1/unit/' + ''.join(
+        c if c.isascii() and c.isalnum() else f'_{ord(c):02x}' for c in UNIT)
+    loop = GLib.MainLoop()
+    failure = []
+    last = None
+
+    def publish(*_args, **_kwargs):
+        nonlocal last
+        try:
+            path = manager.GetUnit(UNIT)
+            props = dbus.Interface(bus.get_object(name, path), 'org.freedesktop.DBus.Properties')
+            active = str(props.Get(name + '.Unit', 'ActiveState'))
+            commands = props.Get(name + '.Service', 'ExecStart')
+            mode = ('gaming' if any('gaming-run' in list(c[1]) for c in commands) else 'watching')
+            state = {'mode': mode if active == 'active' else 'suspended', 'activeState': active}
+        except dbus.DBusException as error:
+            if error.get_dbus_name() not in (name + '.NoSuchUnit', 'org.freedesktop.DBus.Error.UnknownObject'):
+                raise
+            state = {'mode': 'suspended', 'activeState': 'inactive'}
+        if state != last:
+            print(json.dumps(state), flush=True)
+            last = state
+
+    def changed(*args):
+        try:
+            publish()
+        except dbus.DBusException as error:
+            failure.append(error)
+            loop.quit()
+
+    def unit_changed(unit, _path):
+        if unit == UNIT:
+            changed()
+
+    def owner_changed(_name, _old, new):
+        if not new:
+            failure.append(RuntimeError('Systemd connection lost'))
+            loop.quit()
+
+    bus.add_signal_receiver(owner_changed, signal_name='NameOwnerChanged',
+                            dbus_interface='org.freedesktop.DBus', arg0=name)
+    bus.add_signal_receiver(changed, signal_name='PropertiesChanged',
+                            dbus_interface='org.freedesktop.DBus.Properties',
+                            bus_name=name, path=unit_path)
+    for event in ('UnitNew', 'UnitRemoved'):
+        bus.add_signal_receiver(unit_changed, signal_name=event,
+                                dbus_interface=name + '.Manager', bus_name=name)
+    manager.Subscribe()
+    publish()
+    loop.run()
+    if failure:
+        raise RuntimeError(str(failure[0]))
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('start', 'stop'))
+    parser.add_argument('action', choices=('start', 'stop', 'watching', 'gaming', 'suspended', 'observe', 'edit-config'))
     args = parser.parse_args()
-    if args.action == 'start':
+    if args.action == 'observe':
+        return observe()
+    if args.action == 'edit-config':
+        return edit_config()
+    mode = {'start': 'watching', 'stop': 'suspended'}.get(args.action, args.action)
+    if mode != 'suspended':
         legacy = subprocess.run(['systemctl', '--user', 'is-active', '--quiet',
                                  'firefox-idle.service', 'background-suspend.service'])
         if legacy.returncode == 0:
             raise RuntimeError('A standalone idle watcher is active; stop it before enabling Vampire Slayer')
-    # Wait for the previous instance's ExecStopPost before creating a new one.
-    # A missing unit is normal on first enable; systemd-run reports other errors.
-    subprocess.run(['systemctl', '--user', 'stop', UNIT], stdout=subprocess.DEVNULL,
-                   stderr=subprocess.DEVNULL, check=False)
-    if args.action == 'start':
-        subprocess.run(service_command(), check=True)
+    # Complete resume cleanup before entering either active mode.
+    stopped = subprocess.run(['systemctl', '--user', 'stop', UNIT], capture_output=True, text=True)
+    if stopped.returncode:
+        # A missing unit is normal on first enable, but other stop errors matter.
+        state = subprocess.run(['systemctl', '--user', 'show', UNIT, '--property=LoadState', '--value'],
+                               capture_output=True, text=True)
+        if state.returncode or state.stdout.strip() != 'not-found':
+            raise RuntimeError(stopped.stderr.strip() or 'Could not stop the existing service')
+    if mode != 'suspended':
+        subprocess.run(service_command(mode=mode), check=True)
 
 
 if __name__ == '__main__':

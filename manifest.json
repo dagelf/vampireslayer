@@ -2,13 +2,62 @@
   "schemaVersion": 1,
   "id": "dagelf.vampireslayer",
   "name": "Vampire Slayer",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "dagelf",
   "license": "MIT",
-  "description": "Chrome or Firefox eating CPU while you're out for lunch, even when they have nothing to do? Vampire Slayer to the rescue. Suspend idle background browsers and Electron apps; resume on activity. Media exemptions, ignore lists, and optional worker exceptions for Omarchy, Hyprland, Wayland, and X11.",
-  "kinds": ["service"],
+  "description": "Chrome or Firefox eating CPU while you're out for lunch, even when they have nothing to do? Vampire Slayer to the rescue. Suspend idle background browsers and Electron apps; resume on activity. Media exemptions, ignore lists, and optional worker exceptions for Omarchy, Hyprland, Wayland, and X11. Click the vampire for Gaming mode, idle watching, or suspension. Hyprland hotkeys and editor shortcut. Brought to you by dagelf. Reduce background CPU work to save power and help extend battery life while detected media and allowed apps keep running.",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
   "keepLoaded": true,
-  "entryPoints": {"service": "Service.qml"},
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "Widget.qml"
+  },
   "homepage": "https://github.com/dagelf/vampireslayer",
-  "keywords": ["vampireslayer", "vampire slayer", "background", "browser", "app", "idle", "suspend", "Chrome", "Chromium", "Firefox", "CPU", "out for lunch", "Electron", "Omarchy", "Hyprland", "Wayland", "X11", "power management"]
+  "keywords": [
+    "vampireslayer",
+    "vampire slayer",
+    "background",
+    "browser",
+    "app",
+    "idle",
+    "suspend",
+    "Chrome",
+    "Chromium",
+    "Firefox",
+    "CPU",
+    "out for lunch",
+    "Electron",
+    "Omarchy",
+    "Hyprland",
+    "Wayland",
+    "X11",
+    "power management",
+    "gaming mode",
+    "hotkeys",
+    "pixel art",
+    "power saving",
+    "battery life",
+    "audio",
+    "media playback"
+  ],
+  "barWidget": {
+    "displayName": "Vampire Slayer",
+    "description": "Watching, Gaming, or Suspended. Double-click to edit policy. Brought to you by dagelf.",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "colorIcons": false
+    },
+    "schema": [
+      {
+        "key": "colorIcons",
+        "type": "boolean",
+        "label": "Color pixel icons (default: monochrome)"
+      }
+    ]
+  }
 }

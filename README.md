@@ -1,4 +1,12 @@
+<p align="center">
+  <img src="preview.png" alt="Vampire Slayer — pixel-art vampire castle, hunter, and sleeping CPU vampire" width="960">
+</p>
+
 # Vampire Slayer: background browser and app idle suspend
+
+**Brought to you by [dagelf](https://github.com/dagelf).**
+
+[Install](#install-on-omarchy) · [Modes](#one-vampire-three-modes) · [Hotkeys](#hyprland-hotkeys) · [Configuration](#your-policy-preserved-across-plugin-updates)
 
 **Chrome or Firefox eating CPU while you're out for lunch, even when they have nothing to do? Vampire Slayer to the rescue.**
 
@@ -7,11 +15,103 @@ suspends idle Chrome, Chromium, Firefox, Opera, Brave, and Electron app families
 then resumes them when you return to the keyboard or mouse. Your tabs and windows
 stay open; unnecessary background CPU work stops while the apps are suspended.
 
+**Less background CPU work. More battery for what you actually want to do.**
+Pausing idle apps can reduce power consumption and help extend laptop battery life,
+including while you watch a film or listen to music. **Detected audio/video keeps
+playing by default, and allowed apps on your ignore list keep running.** Gaming
+mode can pause the other eligible apps immediately while your media continues.
+Savings depend on the apps and hardware; Vampire Slayer does not claim a fixed
+battery-life increase. Media exemptions require actual MPRIS `Playing` status,
+not just an open media session.
+
 An **Omarchy plugin for Hyprland**, with automatic Wayland and X11/VNC support.
 Keep detected music and video playing, choose an ignore list for apps that must
 stay awake, or suspend even with media. Optional background-worker exceptions
 let you preserve builds and other jobs; they are off by default. No polling loop,
 no browser extension, and no second Quickshell instance.
+
+## One vampire, three modes
+
+Click the vampire in your bar to cycle **Watching → Gaming → Suspended → Watching**.
+The monochrome pixel glyph changes pose with the mode and follows your bar's theme.
+Hover for the current state, what it does, and the next action.
+
+| Mode | What happens |
+| --- | --- |
+| **Slayer watching** | Automatically suspend eligible app families after 15 minutes without input on their desktop; resume when you return. |
+| **Gaming mode** | **Suspend all eligible background app families immediately**, without waiting for idle. Keep them paused while you use the keyboard and mouse to play. |
+| **Slayer suspended** | Resume the apps and turn automatic suspension off. The vampire stays in the bar, ready to wake up. |
+
+“Background apps” means your configured browser/Electron suspend list and detected
+Electron apps, not every Linux process. Gaming mode applies to matching apps across
+your displays, including any matching app you were using. Games and system services
+are not added to the suspend list. Ignore rules always win; playing-media exemptions
+and optional worker exceptions still apply. Set `suspend_media = ["*"]` in your
+TOML if you also want media apps paused. Gaming evaluates apps when entered and
+when media changes; it does not continuously hunt newly launched processes.
+
+Leaving Gaming resumes apps before entering the next mode. Returning to Watching
+starts a fresh idle interval. The icon follows systemd state, including service
+failure or an external stop; it does not optimistically report a successful click.
+Click again after editing your policy to re-enter an active mode and apply it.
+
+**Double-click or right-click the vampire to edit your TOML.** A double-click opens
+the editor without switching modes. Single-click waits for the desktop's
+double-click interval; a hotkey mode change is immediate. Omarchy's selected editor
+opens, defaulting to Neovim in a terminal. The first edit creates a personal copy;
+existing settings are never overwritten.
+
+Color sprites are optional, using Omarchy's standard widget setting:
+
+```sh
+omarchy bar set dagelf.vampireslayer colorIcons true --json
+# Return to theme-colored monochrome glyphs:
+omarchy bar set dagelf.vampireslayer colorIcons false --json
+```
+
+<details>
+<summary>See Vampire Slayer running in Omarchy</summary>
+
+![Monochrome Vampire Slayer icon and Watching tooltip in the live Omarchy desktop](docs/omarchy-watching.png)
+
+</details>
+
+## Hyprland hotkeys
+
+Following [Omarchy's plugin IPC convention](https://github.com/omacom/omarchy/blob/quattro/docs/omarchy-shell.md#ipc),
+mouse actions and shortcuts call the same service. No bindings are installed or
+overwritten automatically. Add these examples to `~/.config/hypr/bindings.lua`:
+
+```lua
+o.bind("SUPER + ALT + V", "Vampire Slayer: edit TOML", "omarchy-shell dagelf.vampireslayer edit")
+o.bind("SUPER + ALT + F12", "Vampire Slayer: cycle mode", "omarchy-shell dagelf.vampireslayer cycle")
+```
+
+These combinations are unused in the checked Omarchy defaults; check your own
+custom bindings with `omarchy menu keybindings --print`. **Super+V is already
+Universal paste** and Super+Ctrl+V opens the clipboard manager.
+
+For Hyprland installations still using `.conf` bindings:
+
+```ini
+bind = SUPER ALT, V, exec, omarchy-shell dagelf.vampireslayer edit
+bind = SUPER ALT, F12, exec, omarchy-shell dagelf.vampireslayer cycle
+```
+
+Direct actions can be bound to any keys you prefer:
+
+```sh
+omarchy-shell dagelf.vampireslayer gaming
+omarchy-shell dagelf.vampireslayer watching
+omarchy-shell dagelf.vampireslayer suspended
+omarchy-shell dagelf.vampireslayer status
+omarchy-shell dagelf.vampireslayer edit
+```
+
+Mode requests return `requested …`, `busy`, or an error; `status` reports the
+observed state. Commands require the plugin to be enabled in the running shell.
+The widget shares one service across monitors. Full integration uses Omarchy's
+built-in bar; third-party replacement bars may restrict service access.
 
 Vampire Slayer is the plugin name; `background-suspend` remains the standalone CLI.
 The implementation is process suspension, not memory reclamation or a promise
@@ -30,11 +130,12 @@ omarchy plugin add https://github.com/dagelf/vampireslayer
 omarchy plugin enable dagelf.vampireslayer
 ```
 
-Omarchy loads `Service.qml` inside its existing shell. It starts the backend with
+Omarchy loads the bar widget and `Service.qml` inside its existing shell. It starts the backend with
 `systemd-run --user` as **vampireslayer.service**, including an `ExecStopPost` resume
 command. Systemd owns process shutdown and cleanup. The transient unit is collected
 when stopped; no permanent service file or system-wide installation is needed.
-The plugin passes only desktop-session environment variables to its unit.
+The plugin passes only desktop-session environment variables to its unit. A small
+D-Bus observer reports unit changes to the icon without polling or a status timer.
 
 The existing standalone `background-suspend.service` remains available for people
 who prefer a permanently installed systemd user service. Do not run both modes.
@@ -56,20 +157,21 @@ activity until stopped or the user session ends. `systemctl --user stop
 vampireslayer.service` is also available directly. A crashed backend is resumed
 through `ExecStopPost`, without an automatic failure/restart loop.
 
-The service entry is kept across ordinary QML hot reloads. After upgrading plugin
-code or changing its policy, disable/re-enable it or restart `vampireslayer.service`.
+The service entry is kept across ordinary QML hot reloads. After updating QML code,
+run `omarchy-restart-shell` so cached components are replaced. For policy changes,
+reselect Watching or Gaming, or restart `vampireslayer.service`.
 
 ## Your policy, preserved across plugin updates
 
-Defaults ship in `background-suspend.toml`. To customize them, create a user copy
-once; an existing file is never overwritten by this command:
+Double-click the vampire or use the editor hotkey above. Defaults ship in
+`background-suspend.toml`. You can also create a user copy manually; an existing file is never overwritten by this command:
 
 ```sh
 mkdir -p ~/.config/vampireslayer
 cp -n ~/.config/omarchy/plugins/dagelf.vampireslayer/background-suspend.toml ~/.config/vampireslayer/
 ```
 
-Edit `~/.config/vampireslayer/background-suspend.toml`, then restart the service.
+Edit `~/.config/vampireslayer/background-suspend.toml`, then reselect an active mode or restart the service.
 `XDG_CONFIG_HOME` is respected. Both plugin and CLI prefer this user copy when it
 exists; an explicit `--config` selects a different file. Uninstalling the plugin
 preserves your policy.
@@ -87,7 +189,7 @@ preserves your policy.
 
 Search terms: Vampire Slayer, vampireslayer, background browser and app idle
 suspend, Chrome CPU, Chromium CPU, Firefox CPU, Electron CPU, out for lunch,
-Omarchy plugin, Hyprland, Wayland, X11, VNC, power management, graphic equalizer,
+Omarchy plugin, Hyprland, Wayland, X11, VNC, power management, Gaming mode, Hyprland hotkeys, pixel art, graphic equalizer,
 PipeWire, audio pause, audio cycle, media hotkeys.
 
 ## Suspension behavior
@@ -217,10 +319,19 @@ systemctl --user import-environment WAYLAND_DISPLAY DISPLAY XDG_RUNTIME_DIR
 An unset `DISPLAY` is fine on a native-only session. Run directly from a Wayland
 terminal with `./background-suspend run` to use its environment without systemd.
 
+## Roadmap
+
+- **Optional foreground-only execution:** suspend all eligible apps unless they are
+  foreground; resume on focus and suspend again when they move to the background.
+  Keep media and allowed-app exceptions configurable. This requires compositor/window
+  focus tracking and reliable window-to-process-family mapping, including multi-window
+  apps and multiple monitors. It is planned, not implemented; today's modes use
+  session idle or an explicit Gaming action.
+
 ## Verification
 
 ```sh
-PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -m unittest -v test_background_suspend test_wayland_idle test_plugin
+PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -m unittest -v test_background_suspend test_wayland_idle test_plugin test_gaming
 ```
 
 Tests use disposable app-named Python processes, synthetic input connections, and
@@ -238,5 +349,11 @@ It never runs the browser suspension backend.
 
 The Omarchy manifest follows the [official development guide](https://plugins.omarchy.org/develop.html)
 and [publishing guide](https://plugins.omarchy.org/publish.html). Validate with
-`omarchy plugin validate .` and `qmllint Service.qml` on an Omarchy installation.
+`omarchy plugin validate .` and `qmllint Service.qml Widget.qml PixelVampire.qml` on an Omarchy installation.
 The repository is licensed under [MIT](LICENSE).
+
+On an Omarchy installation, `python3 tests/qml_smoke.py` exercises mode cycling
+and editor gestures in a private offscreen shell with a fake backend. It does not
+touch your live services. Live VNC validation is recorded in [VALIDATION.md](VALIDATION.md).
+
+The banner is original promotional artwork, not a desktop screenshot. See [artwork notes](ARTWORK.md) for its generation prompt and marketplace references.
