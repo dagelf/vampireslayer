@@ -12,11 +12,11 @@ Item {
     Process {
         command: ["/usr/bin/python3", root.controller, "start"]
         running: true
-        stdout: SplitParser { onRead: function(line) { console.log("Vampireslayer:", line); } }
-        stderr: SplitParser { onRead: function(line) { console.warn("Vampireslayer:", line); } }
+        stdout: SplitParser { onRead: function(line) { console.log("Vampire Slayer:", line); } }
+        stderr: SplitParser { onRead: function(line) { console.warn("Vampire Slayer:", line); } }
         onExited: function(exitCode) {
             if (exitCode !== 0)
-                console.warn("Vampireslayer did not start; inspect the message above and re-enable to retry.");
+                console.warn("Vampire Slayer did not start; inspect the message above and re-enable to retry.");
         }
     }
 

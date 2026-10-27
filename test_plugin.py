@@ -24,7 +24,7 @@ class PluginTests(unittest.TestCase):
         self.assertEqual(manifest['id'], 'dagelf.vampireslayer')
         self.assertEqual(manifest['kinds'], ['service'])
         self.assertTrue((ROOT / manifest['entryPoints']['service']).is_file())
-        opening = "Chrome or Firefox eating CPU while you're out for lunch, even when they have nothing to do? Vampire slayer to the rescue."
+        opening = "Chrome or Firefox eating CPU while you're out for lunch, even when they have nothing to do? Vampire Slayer to the rescue."
         self.assertIn(opening, manifest['description'])
         self.assertIn(opening, (ROOT / 'README.md').read_text())
 

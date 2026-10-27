@@ -8,10 +8,10 @@ Tags: Power management, Hyprland, System
 
 ## Listing copy
 
-**Vampireslayer: background browser and app idle suspend**
+**Vampire Slayer: background browser and app idle suspend**
 
 Chrome or Firefox eating CPU while you're out for lunch, even when they have
-nothing to do? Vampire slayer to the rescue.
+nothing to do? Vampire Slayer to the rescue.
 
 Pause CPU-hungry background browsers and Electron apps when you walk away; resume
 them when you return. Keep detected media playing, choose an ignore list, or

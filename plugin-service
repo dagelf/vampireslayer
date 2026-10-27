@@ -20,7 +20,7 @@ def unit_quote(value):
 def service_command(root=ROOT, env=os.environ):
     backend = str(root / 'background-suspend')
     return ['systemd-run', '--user', '--unit=' + UNIT, '--collect',
-            '--description=Vampireslayer: background browser and app idle suspend',
+            '--description=Vampire Slayer: background browser and app idle suspend',
             '--property=Type=exec', '--property=TimeoutStopSec=10',
             '--property=ExecStopPost=/usr/bin/python3 ' + unit_quote(backend) + ' resume',
             '--expand-environment=no',
@@ -36,7 +36,7 @@ def main():
         legacy = subprocess.run(['systemctl', '--user', 'is-active', '--quiet',
                                  'firefox-idle.service', 'background-suspend.service'])
         if legacy.returncode == 0:
-            raise RuntimeError('A standalone idle watcher is active; stop it before enabling Vampireslayer')
+            raise RuntimeError('A standalone idle watcher is active; stop it before enabling Vampire Slayer')
     # Wait for the previous instance's ExecStopPost before creating a new one.
     # A missing unit is normal on first enable; systemd-run reports other errors.
     subprocess.run(['systemctl', '--user', 'stop', UNIT], stdout=subprocess.DEVNULL,
@@ -50,5 +50,5 @@ if __name__ == '__main__':
         main()
     except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as error:
         import sys
-        print(f'Vampireslayer: {error}', file=sys.stderr)
+        print(f'Vampire Slayer: {error}', file=sys.stderr)
         raise SystemExit(1)

@@ -1,8 +1,8 @@
-# Vampireslayer: background browser and app idle suspend
+# Vampire Slayer: background browser and app idle suspend
 
-**Chrome or Firefox eating CPU while you're out for lunch, even when they have nothing to do? Vampire slayer to the rescue.**
+**Chrome or Firefox eating CPU while you're out for lunch, even when they have nothing to do? Vampire Slayer to the rescue.**
 
-Put background browsers and apps on pause when you walk away. Vampireslayer
+Put background browsers and apps on pause when you walk away. Vampire Slayer
 suspends idle Chrome, Chromium, Firefox, Opera, Brave, and Electron app families,
 then resumes them when you return to the keyboard or mouse. Your tabs and windows
 stay open; unnecessary background CPU work stops while the apps are suspended.
@@ -13,7 +13,7 @@ stay awake, or suspend even with media. Optional background-worker exceptions
 let you preserve builds and other jobs; they are off by default. No polling loop,
 no browser extension, and no second Quickshell instance.
 
-Vampireslayer is the plugin name; `background-suspend` remains the standalone CLI.
+Vampire Slayer is the plugin name; `background-suspend` remains the standalone CLI.
 The implementation is process suspension, not memory reclamation or a promise
 that every background task is unnecessary. Use exceptions for work you want to
 continue, including uploads or workers that aren't exposed as separate processes.
@@ -85,7 +85,7 @@ preserves your policy.
 - [Linux CLI utilities](https://github.com/dagelf/utils): the original home of the
   media-cycle hotkey and other small desktop tools.
 
-Search terms: Vampireslayer, Vampire slayer, background browser and app idle
+Search terms: Vampire Slayer, vampireslayer, background browser and app idle
 suspend, Chrome CPU, Chromium CPU, Firefox CPU, Electron CPU, out for lunch,
 Omarchy plugin, Hyprland, Wayland, X11, VNC, power management, graphic equalizer,
 PipeWire, audio pause, audio cycle, media hotkeys.
