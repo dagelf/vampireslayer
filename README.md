@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="preview.png" alt="Vampire Slayer — pixel-art vampire castle, hunter, and sleeping CPU vampire" width="960">
+  <img src="preview.png" alt="Vampire Slayer — pixel-art vampire castle, hunter sneaking up on a vampire secretly working at a computer" width="960">
 </p>
 
 # Vampire Slayer: background browser and app idle suspend
@@ -20,9 +20,7 @@ Pausing idle apps can reduce power consumption and help extend laptop battery li
 including while you watch a film or listen to music. **Detected audio/video keeps
 playing by default, and allowed apps on your ignore list keep running.** Gaming
 mode can pause the other eligible apps immediately while your media continues.
-Savings depend on the apps and hardware; Vampire Slayer does not claim a fixed
-battery-life increase. Media exemptions require actual MPRIS `Playing` status,
-not just an open media session.
+Media exemptions follow actual MPRIS `Playing` status.
 
 An **Omarchy plugin for Hyprland**, with automatic Wayland and X11/VNC support.
 Keep detected music and video playing, choose an ignore list for apps that must
@@ -42,17 +40,13 @@ Hover for the current state, what it does, and the next action.
 | **Gaming mode** | **Suspend all eligible background app families immediately**, without waiting for idle. Keep them paused while you use the keyboard and mouse to play. |
 | **Slayer suspended** | Resume the apps and turn automatic suspension off. The vampire stays in the bar, ready to wake up. |
 
-“Background apps” means your configured browser/Electron suspend list and detected
-Electron apps, not every Linux process. Gaming mode applies to matching apps across
-your displays, including any matching app you were using. Games and system services
-are not added to the suspend list. Ignore rules always win; playing-media exemptions
-and optional worker exceptions still apply. Set `suspend_media = ["*"]` in your
-TOML if you also want media apps paused. Gaming evaluates apps when entered and
-when media changes; it does not continuously hunt newly launched processes.
+Gaming follows your browser/Electron suspend list and Electron detection across
+your displays. Ignore rules always win; playing-media exemptions and optional
+worker exceptions keep the apps you choose running. Set `suspend_media = ["*"]` in your
+TOML if you also want media apps paused. Gaming evaluates apps when entered and when media changes.
 
 Leaving Gaming resumes apps before entering the next mode. Returning to Watching
-starts a fresh idle interval. The icon follows systemd state, including service
-failure or an external stop; it does not optimistically report a successful click.
+starts a fresh idle interval. The icon follows the service’s actual state.
 Click again after editing your policy to re-enter an active mode and apply it.
 
 **Double-click or right-click the vampire to edit your TOML.** A double-click opens
@@ -79,17 +73,16 @@ omarchy bar set dagelf.vampireslayer colorIcons false --json
 ## Hyprland hotkeys
 
 Following [Omarchy's plugin IPC convention](https://github.com/omacom/omarchy/blob/quattro/docs/omarchy-shell.md#ipc),
-mouse actions and shortcuts call the same service. No bindings are installed or
-overwritten automatically. Add these examples to `~/.config/hypr/bindings.lua`:
+mouse actions and shortcuts call the same service. Add these bindings to `~/.config/hypr/bindings.lua`:
 
 ```lua
 o.bind("SUPER + ALT + V", "Vampire Slayer: edit TOML", "omarchy-shell dagelf.vampireslayer edit")
 o.bind("SUPER + ALT + F12", "Vampire Slayer: cycle mode", "omarchy-shell dagelf.vampireslayer cycle")
 ```
 
-These combinations are unused in the checked Omarchy defaults; check your own
-custom bindings with `omarchy menu keybindings --print`. **Super+V is already
-Universal paste** and Super+Ctrl+V opens the clipboard manager.
+**Super+Alt+V** opens your TOML; **Super+Alt+F12** cycles modes. These leave
+Omarchy’s Super+V paste and Super+Ctrl+V clipboard shortcuts in place. List your
+bindings with `omarchy menu keybindings --print`.
 
 For Hyprland installations still using `.conf` bindings:
 
@@ -110,20 +103,16 @@ omarchy-shell dagelf.vampireslayer edit
 
 Mode requests return `requested …`, `busy`, or an error; `status` reports the
 observed state. Commands require the plugin to be enabled in the running shell.
-The widget shares one service across monitors. Full integration uses Omarchy's
-built-in bar; third-party replacement bars may restrict service access.
+The widget shares one service across monitors in Omarchy’s built-in bar.
 
 Vampire Slayer is the plugin name; `background-suspend` remains the standalone CLI.
-The implementation is process suspension, not memory reclamation or a promise
-that every background task is unnecessary. Use exceptions for work you want to
-continue, including uploads or workers that aren't exposed as separate processes.
 
 ## Install on Omarchy
 
 Requires Omarchy Quattro's plugin system, systemd user services, Python 3.11+,
 `python-dbus`, and `python-gobject` on Arch. Hyprland already provides the Wayland
 client library. X11/VNC watching additionally uses `xorg-xinput` and `coreutils`.
-Install missing dependencies using your package manager; the plugin never runs sudo.
+Install the dependencies with your package manager.
 
 ```sh
 omarchy plugin add https://github.com/dagelf/vampireslayer
@@ -132,15 +121,14 @@ omarchy plugin enable dagelf.vampireslayer
 
 Omarchy loads the bar widget and `Service.qml` inside its existing shell. It starts the backend with
 `systemd-run --user` as **vampireslayer.service**, including an `ExecStopPost` resume
-command. Systemd owns process shutdown and cleanup. The transient unit is collected
-when stopped; no permanent service file or system-wide installation is needed.
+command. Systemd handles shutdown, resumes apps, and collects the unit when stopped.
 The plugin passes only desktop-session environment variables to its unit. A small
 D-Bus observer reports unit changes to the icon without polling or a status timer.
 
 The existing standalone `background-suspend.service` remains available for people
-who prefer a permanently installed systemd user service. Do not run both modes.
-If an old `firefox-idle.service` or standalone watcher is active, the plugin refuses
-to start until you stop it explicitly.
+who prefer a permanently installed systemd user service. Choose the plugin or the
+standalone service. For an existing Firefox-only install, follow
+[Upgrading from firefox-idle](#upgrading-from-firefox-idle) first.
 
 ```sh
 systemctl --user status vampireslayer.service
@@ -150,12 +138,10 @@ systemctl --user stop vampireslayer.service  # Wait for cleanup before deleting 
 omarchy plugin remove dagelf.vampireslayer
 ```
 
-Disabling stops the unit and resumes suspended apps. Before removing the plugin,
-wait for the stop command above to finish: the fallback cleanup uses the checkout.
-A shell crash does not kill the systemd-managed watcher; it keeps reacting to
-activity until stopped or the user session ends. `systemctl --user stop
-vampireslayer.service` is also available directly. A crashed backend is resumed
-through `ExecStopPost`, without an automatic failure/restart loop.
+Disabling stops the unit and resumes apps. Run the commands above in order to
+finish cleanup before removing the checkout. The systemd-managed watcher keeps
+reacting to activity independently of the shell. `ExecStopPost` resumes apps when
+the backend exits.
 
 The service entry is kept across ordinary QML hot reloads. After updating QML code,
 run `omarchy-restart-shell` so cached components are replaced. For policy changes,
@@ -195,9 +181,8 @@ PipeWire, audio pause, audio cycle, media hotkeys.
 ## Suspension behavior
 
 Suspend browser and Electron process families after 15 minutes without real input
-on their X11/VNC display or Wayland session. Activity resumes that session's apps. This retains the
-original per-display idle model: it does not suspend an unfocused app while you
-are using another app on the same display. XTEST-generated input is ignored on
+on their X11/VNC display or Wayland session. Activity resumes that session’s apps.
+Each desktop has its own idle state; all apps on an active desktop stay awake. XTEST-generated input is ignored on
 X11; on Wayland, the compositor decides which activity resets its idle counter.
 
 ## Desktop detection
@@ -223,10 +208,8 @@ Wayland session and its XWayland server. Launch independent X11/VNC sessions wit
 
 Version 2 of the Wayland protocol supplies input-only idle notifications, allowing
 our per-app media policy to work independently of compositor idle inhibitors.
-Version 1 is supported but honors compositor inhibitors; those may prevent idle
-notifications even with `--suspend-media`. There is no universal raw-input API
-across all Wayland compositors. Unsupported APIs, disconnects, and seat removal
-leave the affected apps resumed; restart the watcher after restoring the session.
+Version 1 follows compositor idle inhibitors. Apps resume when the idle connection
+ends; restart the watcher after restoring the session.
 
 ## Defaults and exceptions
 
@@ -243,23 +226,20 @@ editing your user policy. Patterns are case-insensitive shell globs, not regular
 | `background_workers` | Configurable process/argument-token patterns for Node, builds, language servers, explicit worker scripts, transfers, and headless jobs. Used only when worker exceptions are enabled. |
 
 App roots need a `DISPLAY` or `WAYLAND_DISPLAY`; all their owned descendant processes follow their
-policy, including helpers without either variable. A standalone Node/Bun/Deno server
-is not selected merely because it runs JavaScript. Add its executable to `suspend`
-explicitly if wanted. The controller's own ancestor family is always protected.
+policy, including helpers without either variable. To include standalone
+Node/Bun/Deno servers, add their executable names to `suspend`. The controller's own ancestor family is always protected.
 
 Media detection listens to **all** registered MPRIS players and maps their PIDs
 back to app families, including players hosted in helper processes. Only
 [`PlaybackStatus = Playing`](https://specifications.freedesktop.org/mpris/latest/Player_Interface.html)
-grants an exemption. Paused/stopped players do not. Media not exposed through
-MPRIS, such as some calls and WebAudio applications, cannot be detected. Unknown
-status temporarily releases suspensions; a failed monitor resumes apps and exits.
+grants an exemption. Paused and stopped players follow the idle policy. Use an
+ignore rule for calls or WebAudio apps that keep their playback outside MPRIS.
+Apps resume while media status is being resolved and when the monitor exits.
 When media exemptions are disabled globally, no media monitor is required.
 
-Worker exceptions protect an **entire app family**, not just its worker. A worker's
-existence is the signal, not CPU use: a long-lived idle Node worker will also keep
-the app awake. Worker exits trigger an immediate recheck using pidfds, with no
-polling timer. Browser service workers and worker threads inside renderers cannot
-be reliably classified from OS process names; use an app ignore rule for those.
+Worker exceptions keep an **entire app family** awake while a matching worker
+exists. Worker exits trigger an immediate recheck using pidfds. Use app ignore
+rules for browser service workers and worker threads inside renderers.
 
 ## Commands
 
@@ -279,54 +259,98 @@ Only the needed backend is started. No browser extension or remote-debugging por
 ./background-suspend resume                       # Resume configured app families
 ```
 
-`list` shows what would happen when a display becomes idle, not whether its idle
-deadline has elapsed. The ignore list always wins, including in `gaming` mode.
+`list` previews the policy decisions for each app family. The ignore list always wins, including in `gaming` mode.
 
 The service controls are `start`, `stop`, `status`, and `gaming`. `gaming` stops
 automatic watching and immediately suspends eligible apps, respecting media and
 worker exceptions. Use `gaming --suspend-media` to override media, and `start` to
-return to automatic mode. Gaming exemptions are a one-time snapshot; worker/media
-changes are followed only in `run` mode. Put persistent policy in the TOML file;
-service controls do not pass command-line policy overrides to systemd.
+return to automatic mode. The standalone `gaming` command takes a one-time media/worker snapshot.
+The Omarchy plugin’s Gaming mode keeps following media events. Put persistent
+policy in the TOML file for systemd service runs.
 
-## Standalone systemd installation
+## Standalone Arch installation
 
-For a checkout at `~/vampireslayer`, the supplied permanent user unit is an
-alternative to the Omarchy plugin. Stop any previous watcher before switching:
+The same tooling runs directly on Arch with X11/VNC or Wayland. Install the
+runtime dependencies, clone this repository, and enable the user service:
 
 ```sh
-systemctl --user disable --now firefox-idle.service
+sudo pacman -S --needed python python-dbus python-gobject
+git clone https://github.com/dagelf/vampireslayer ~/vampireslayer
+cd ~/vampireslayer
+# For X11/VNC sessions:
+sudo pacman -S --needed xorg-xinput coreutils
+
 mkdir -p ~/.config/systemd/user
 install -m 644 background-suspend.service ~/.config/systemd/user/
 systemctl --user daemon-reload
-./background-suspend start
+systemctl --user enable --now background-suspend.service
 ```
 
-The legacy `firefox-idle` launcher is retained for existing users of the original
-`~/utils/scripts/firefox-idle`; new users should use the plugin or `background-suspend`.
+The supplied unit uses `~/vampireslayer/background-suspend`. For a checkout
+elsewhere, update `ExecStart` and `ExecStopPost` in your installed unit.
 
-The supplied unit assumes the checkout is `~/vampireslayer`; adjust its paths if
-you move it. Do not run both watchers on the same displays.
+```sh
+./background-suspend status    # Inspect the standalone user service
+./background-suspend gaming    # Pause eligible apps immediately
+./background-suspend start     # Resume apps and return to idle watching
+./background-suspend stop      # Resume apps and disable automatic watching
+```
 
-On Wayland, the user service needs the same session variables as applications.
-Desktop session managers often import them already. If yours does not, run this
-from the compositor's session-start hook before starting/restarting the service:
+On Wayland, launch from your compositor’s session environment. If your session
+manager needs its variables imported into systemd, run:
 
 ```sh
 systemctl --user import-environment WAYLAND_DISPLAY DISPLAY XDG_RUNTIME_DIR
+systemctl --user restart background-suspend.service
 ```
 
-An unset `DISPLAY` is fine on a native-only session. Run directly from a Wayland
-terminal with `./background-suspend run` to use its environment without systemd.
+For a foreground watcher, run `./background-suspend run` from your desktop terminal.
+
+### Upgrading from firefox-idle
+
+This repository grew out of the Firefox-only X11/VNC watcher in
+[dagelf/utils](https://github.com/dagelf/utils). The current script is
+**`background-suspend`**, and its standalone unit is **`background-suspend.service`**.
+The `firefox-idle` file here is a compatibility launcher for
+`~/utils/scripts/firefox-idle`, retained for existing installations.
+
+From your checkout, retire the old watcher and resume its Firefox processes:
+
+```sh
+cd ~/vampireslayer
+systemctl --user disable --now firefox-idle.service
+./firefox-idle resume
+```
+
+Then choose the [Omarchy plugin](#install-on-omarchy) or enable the new
+[standalone service](#standalone-arch-installation). Update shortcuts that invoke
+`firefox-idle` to call `background-suspend` for standalone use, or use the
+[plugin IPC actions](#hyprland-hotkeys) inside Omarchy.
+
+To retain a Firefox-only policy with the new watcher, create your personal TOML:
+
+```sh
+mkdir -p ~/.config/vampireslayer
+cp -n background-suspend.toml ~/.config/vampireslayer/
+```
+
+Edit these entries in `~/.config/vampireslayer/background-suspend.toml`, keeping
+the other settings:
+
+```toml
+suspend = ["firefox", "firefox-esr"]
+detect_electron = false
+```
+
+Restart your chosen watcher to apply it. Both setups keep the media exemptions,
+ignore list, and optional worker exceptions available.
 
 ## Roadmap
 
 - **Optional foreground-only execution:** suspend all eligible apps unless they are
   foreground; resume on focus and suspend again when they move to the background.
-  Keep media and allowed-app exceptions configurable. This requires compositor/window
-  focus tracking and reliable window-to-process-family mapping, including multi-window
-  apps and multiple monitors. It is planned, not implemented; today's modes use
-  session idle or an explicit Gaming action.
+  Keep media and allowed-app exceptions configurable, with compositor focus
+  tracking for multi-window apps and multiple monitors.
 
 ## Verification
 
@@ -339,13 +363,12 @@ a private D-Bus session. They cover family selection, media state changes, stale
 replies, ignore precedence, media overrides, worker exits, PID reuse, and cleanup
 after monitoring failure. Wayland tests exercise the real client library with a
 private protocol peer, compositor-authoritative state, and a private Mutter API
-service. They do not suspend desktop apps. A live Wayland desktop is not required.
+service.
 
 
 For an optional live systemd check, run
 `VAMPIRESLAYER_TEST_SYSTEMD=1 python3 -m unittest test_plugin`. It creates a
 disposable waiting Python service and verifies cleanup after stop and forced exit.
-It never runs the browser suspension backend.
 
 The Omarchy manifest follows the [official development guide](https://plugins.omarchy.org/develop.html)
 and [publishing guide](https://plugins.omarchy.org/publish.html). Validate with
@@ -353,7 +376,11 @@ and [publishing guide](https://plugins.omarchy.org/publish.html). Validate with
 The repository is licensed under [MIT](LICENSE).
 
 On an Omarchy installation, `python3 tests/qml_smoke.py` exercises mode cycling
-and editor gestures in a private offscreen shell with a fake backend. It does not
-touch your live services. Live VNC validation is recorded in [VALIDATION.md](VALIDATION.md).
+and editor gestures in a private offscreen shell with a fake backend.
+Live VNC validation is recorded in [VALIDATION.md](VALIDATION.md).
 
-The banner is original promotional artwork, not a desktop screenshot. See [artwork notes](ARTWORK.md) for its generation prompt and marketplace references.
+See [artwork notes](ARTWORK.md) for the banner’s generation prompt and marketplace references.
+
+PS This Plugin just packaged my normal arch tooling, check [utils](https://github.com/dagelf/utils), in tribute to DHH's Lex Fridman podcast.
+
+PS Omarchy is a trap, if you're new to Linux, just use Mint or Arch with Xfce4! (Everything else is bloated!)

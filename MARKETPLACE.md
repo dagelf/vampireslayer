@@ -23,7 +23,7 @@ GNOME/Mutter, and X11/VNC. Uses event notifications and systemd user-service cle
 
 Reduce background CPU work to save power and help extend battery life, even
 while watching media. Detected audio/video keeps playing by default, and allowed
-apps on your ignore list continue running. Actual savings depend on your workload.
+apps on your ignore list continue running.
 
 Click the vampire to cycle Slayer watching, Gaming mode, and Slayer suspended.
 Gaming immediately suspends eligible background app families; double-click opens
@@ -43,9 +43,7 @@ Also see the graphic equalizer and audio pause/cycle hotkeys linked in the READM
 - Uses the compositor's libwayland-client on Wayland; no privileged input-device access.
 - MIT license; original generated preview.png and hand-authored monochrome pixel glyphs.
 - Does not overwrite user configuration, install packages, or run sudo.
-- Detection limits and v1 compositor inhibitors are documented.
 - Tested with private Wayland/Mutter/MPRIS fixtures and disposable app processes; manifest validation and QML lint pass. Live Omarchy/Hyprland activation, Gaming/media behavior, and editor gestures were tested through WayVNC; see VALIDATION.md.
 - A disposable systemd service verifies normal-stop and forced-exit cleanup.
 
-Submit using https://github.com/omacom/omarchy-plugin-marketplace/issues/new?template=submit-plugin.yml
-after the public repository is reachable. Marketplace approval is a separate maintainer action.
+Submission: https://github.com/omacom/omarchy-plugin-marketplace/issues/13061

@@ -5,7 +5,7 @@
   "version": "1.1.0",
   "author": "dagelf",
   "license": "MIT",
-  "description": "Chrome or Firefox eating CPU while you're out for lunch, even when they have nothing to do? Vampire Slayer to the rescue. Suspend idle background browsers and Electron apps; resume on activity. Media exemptions, ignore lists, and optional worker exceptions for Omarchy, Hyprland, Wayland, and X11. Click the vampire for Gaming mode, idle watching, or suspension. Hyprland hotkeys and editor shortcut. Brought to you by dagelf. Reduce background CPU work to save power and help extend battery life while detected media and allowed apps keep running.",
+  "description": "Chrome or Firefox eating CPU while you're out for lunch, even when they have nothing to do? Vampire Slayer to the rescue. Background browser and app idle suspend for Omarchy, Hyprland, Wayland and X11. Gaming mode, media exemptions, ignore lists and optional worker exceptions. Save power and extend battery life while detected media and allowed apps keep running. Double-click to edit TOML; bind Hyprland hotkeys. Brought to you by dagelf.",
   "kinds": [
     "service",
     "bar-widget"
