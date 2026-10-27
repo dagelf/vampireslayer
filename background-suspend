@@ -25,6 +25,7 @@ import tomllib
 SERVICE = 'background-suspend.service'
 XSOCKETS = Path('/tmp/.X11-unix')
 CONFIG = Path(__file__).resolve().with_suffix('.toml')
+USER_CONFIG = Path(os.environ.get('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'vampireslayer/background-suspend.toml'
 
 
 def matches(patterns, names):
@@ -668,7 +669,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=('start', 'stop', 'status', 'gaming', 'run', 'resume', 'list', 'media-watch'), nargs='?', default='status')
     parser.add_argument('--minutes', type=int, default=15, help='Idle threshold for run (default: 15)')
-    parser.add_argument('--config', type=Path, default=CONFIG, help='Policy TOML (default: beside script)')
+    parser.add_argument('--config', type=Path, default=None, help='Policy TOML (default: user config, then beside script)')
     parser.add_argument('--ignore', action='append', default=[], metavar='GLOB', help='Add an ignore pattern')
     parser.add_argument('--suspend-media', nargs='?', const='*', action='append', default=[], metavar='GLOB',
                         help='Suspend even with media, for GLOB or all apps when omitted')
@@ -679,8 +680,10 @@ def main():
     if args.action == 'media-watch':
         return media_watch()
     if args.action in ('start', 'stop', 'status') and (
-            args.ignore or args.suspend_media or args.worker_exceptions or args.config != CONFIG or args.minutes != 15):
+            args.ignore or args.suspend_media or args.worker_exceptions or args.config is not None or args.minutes != 15):
         parser.error('Service controls use its installed unit and config; use policy options with run/list/gaming/resume')
+    if args.config is None:
+        args.config = USER_CONFIG if USER_CONFIG.exists() else CONFIG
     try:
         policy = load_policy(args.config)
     except (OSError, ValueError) as error:

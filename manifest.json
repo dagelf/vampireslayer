@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "dagelf.vampireslayer",
+  "name": "Vampireslayer: background browser and app idle suspend",
+  "version": "1.0.0",
+  "author": "dagelf",
+  "license": "MIT",
+  "description": "Chrome or Firefox eating CPU while you're out for lunch, even when they have nothing to do? Vampire slayer to the rescue. Suspend idle background browsers and Electron apps; resume on activity. Media exemptions, ignore lists, and optional worker exceptions for Omarchy, Hyprland, Wayland, and X11.",
+  "kinds": ["service"],
+  "keepLoaded": true,
+  "entryPoints": {"service": "Service.qml"},
+  "homepage": "https://github.com/dagelf/vampireslayer",
+  "keywords": ["vampireslayer", "vampire slayer", "background", "browser", "app", "idle", "suspend", "Chrome", "Chromium", "Firefox", "CPU", "out for lunch", "Electron", "Omarchy", "Hyprland", "Wayland", "X11", "power management"]
+}
