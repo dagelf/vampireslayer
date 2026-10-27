@@ -1,0 +1,206 @@
+#!/usr/bin/python3
+"""Pause Firefox independently on each idle X11/VNC display; manage with start/stop/status.
+
+Uses XInput events; no keys or coordinates are stored. XTEST input is ignored.
+Each display controls only Firefox processes with that DISPLAY environment.
+gaming freezes immediately and ignores input; start resumes automatic mode.
+stop disables automatic mode and resumes Firefox.
+"""
+import argparse
+import ctypes
+import os
+from pathlib import Path
+import re
+import selectors
+import signal
+import stat
+import subprocess
+import time
+
+SERVICE = 'firefox-idle.service'
+XSOCKETS = Path('/tmp/.X11-unix')
+
+
+def firefox_signal(name, display=None):
+    # Match argv[0], including renamed content processes, but not firefox-idle
+    # or commands merely mentioning Firefox. pkill handles PID identities.
+    scope = [] if display is None else ['--env', f'DISPLAY={display}']
+    result = subprocess.run(['pkill', '--signal', name, '-u', str(os.getuid()),
+                             *scope, '-f', r'^([^ ]*/)?firefox( |$)'], check=False)
+    if result.returncode not in (0, 1):  # 1 includes Firefox not running.
+        raise RuntimeError(f'pkill {name} failed: {result.returncode}')
+
+
+class Idle:
+    """Own the deadline and paused state; only transitions send signals."""
+    def __init__(self, seconds, send=firefox_signal, clock=time.monotonic, label='Firefox'):
+        self.seconds, self.send, self.clock = seconds, send, clock
+        self.label = label
+        self.last_input = clock()
+        self.paused = False
+
+    def activity(self):
+        self.last_input = self.clock()
+        if self.paused:
+            self.send('SIGCONT')
+            self.paused = False
+            print(f'{self.label} resumed', flush=True)
+
+    def timeout(self):
+        return None if self.paused else max(0, self.seconds - (self.clock() - self.last_input))
+
+    def expire(self):
+        if not self.paused and self.timeout() == 0:
+            self.paused = True  # Cleanup must resume even if signalling fails.
+            self.send('SIGSTOP')
+            print(f'{self.label} paused', flush=True)
+
+
+class Session:
+    """One X server connection owns one display's idle state."""
+    def __init__(self, display, identity, seconds):
+        self.display, self.identity = display, identity
+        self.idle = Idle(seconds, lambda name: firefox_signal(name, display), label=f'Firefox on {display}')
+        self.buffer, self.xtest, self.raw = b'', set(), False
+        self.ready = False
+        self.process = subprocess.Popen(
+            ['stdbuf', '-oL', 'xinput', 'test-xi2', '--root'], stdout=subprocess.PIPE,
+            env={**os.environ, 'DISPLAY': display, 'LC_ALL': 'C'})
+
+    def feed(self, data):
+        self.buffer += data
+        lines = self.buffer.split(b'\n')
+        self.buffer = lines.pop()
+        if len(self.buffer) > 65536:
+            raise ValueError('Oversized XInput event line')
+        active = False
+        for raw in lines:
+            line = raw.decode('utf-8', errors='replace').strip()
+            device = re.search(r'\bid=(\d+)', line)
+            if device:
+                self.ready = True
+                if 'XTEST' in line:
+                    self.xtest.add(int(device[1]))
+            elif line.startswith('EVENT type '):
+                self.raw = bool(re.search(r'\(Raw(?:Key|Button|Motion|Touch)', line))
+            elif self.raw and line.startswith('device:'):
+                source = re.fullmatch(r'device:\s+\d+\s+\((\d+)\)', line)
+                active |= source is not None and int(source[1]) not in self.xtest
+                self.raw = False
+        if active:
+            self.idle.activity()  # Once per received batch, without storing input.
+
+    def close(self):
+        self.idle.activity()  # A lost X connection must leave this browser usable.
+        if not self.process.stdout.closed:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait()
+            self.process.stdout.close()
+
+
+def displays():
+    found = {}
+    for path in XSOCKETS.glob('X*'):
+        match = re.fullmatch(r'X([0-9]{1,5})', path.name)
+        try:
+            if match:
+                info = path.stat()
+                if stat.S_ISSOCK(info.st_mode):
+                    found[f':{match[1]}'] = (info.st_dev, info.st_ino)
+        except FileNotFoundError:
+            pass
+    return found
+
+
+def watch(seconds):
+    sessions = {}
+    libc = ctypes.CDLL(None, use_errno=True)
+    notify = libc.inotify_init1(os.O_NONBLOCK | os.O_CLOEXEC)
+    if notify < 0:
+        raise OSError(ctypes.get_errno(), 'inotify_init1')
+    try:
+        # Session creation/removal/rename. No timer polls for new displays.
+        if libc.inotify_add_watch(notify, os.fsencode(XSOCKETS), 0x100 | 0x200 | 0x80 | 0x40) < 0:
+            raise OSError(ctypes.get_errno(), 'Cannot watch X display sockets')
+        with selectors.DefaultSelector() as selector:
+            selector.register(notify, selectors.EVENT_READ)
+
+            def disconnect(session):
+                if not session.process.stdout.closed:
+                    selector.unregister(session.process.stdout)
+                session.close()
+
+            def refresh():
+                current = displays()
+                for display, session in list(sessions.items()):
+                    if current.get(display) != session.identity:
+                        disconnect(session)
+                        del sessions[display]
+                for display, identity in current.items():
+                    if display not in sessions:
+                        session = Session(display, identity, seconds)
+                        sessions[display] = session
+                        selector.register(session.process.stdout, selectors.EVENT_READ, session)
+                        print(f'Watching display {display}', flush=True)
+
+            refresh()
+            while True:
+                live = [s for s in sessions.values() if s.ready and not s.process.stdout.closed]
+                deadlines = [s.idle.timeout() for s in live if not s.idle.paused]
+                ready = selector.select(min(deadlines, default=None))
+                if any(key.fd == notify for key, _ in ready):
+                    os.read(notify, 65536)
+                    refresh()
+                    continue  # Discard events from replaced server connections.
+                for key, _ in ready:
+                    session = key.data
+                    try:
+                        data = os.read(key.fd, 65536)
+                        if not data:
+                            raise EOFError('XInput connection ended')
+                        session.feed(data)
+                    except (OSError, EOFError, ValueError) as error:
+                        disconnect(session)
+                        print(f'{session.display}: {error}; resumed. Restart service to reconnect.', flush=True)
+                for session in live:
+                    if not session.process.stdout.closed:
+                        session.idle.expire()
+    finally:
+        for session in sessions.values():
+            session.close()
+        os.close(notify)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('action', choices=('start', 'stop', 'status', 'gaming', 'run', 'resume'), nargs='?', default='status')
+    parser.add_argument('--minutes', type=int, default=15, help='Idle threshold for run (default: 15)')
+    args = parser.parse_args()
+    if args.minutes <= 0:
+        parser.error('--minutes must be positive')
+    if args.action == 'resume':
+        firefox_signal('SIGCONT')
+        return 0
+    if args.action != 'run':
+        command = {'start': ['enable', '--now'], 'stop': ['disable', '--now'],
+                   'status': ['status', '--no-pager'], 'gaming': ['stop']}[args.action]
+        result = subprocess.call(['systemctl', '--user', *command, SERVICE])
+        if result == 0 and args.action != 'status':
+            firefox_signal('SIGSTOP' if args.action == 'gaming' else 'SIGCONT')
+        return result
+
+    def stop(_signum, _frame):
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    watch(args.minutes * 60)
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
