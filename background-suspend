@@ -1,9 +1,9 @@
 #!/usr/bin/python3
-"""Suspend idle browser and Electron app families on each X11/VNC display.
+"""Suspend idle browser and Electron app families on X11/VNC and Wayland.
 
 Configure defaults and exceptions in background-suspend.toml. Only MPRIS Playing
-counts as media playback. XTEST input is ignored; input contents are never stored.
-Requires Python 3.11+, python3-dbus, python3-gi, xinput, and Linux pidfds.
+counts as media playback. X11 ignores XTEST; Wayland uses compositor idle events.
+No input contents are stored. Requires Python 3.11+ and Linux pidfds.
 """
 import argparse
 import ctypes
@@ -70,6 +70,18 @@ class Process:
     argv: tuple
     exe: str
     display: str
+    wayland: str = ''
+
+    @property
+    def scope(self):
+        if self.wayland:
+            return self.wayland
+        # XWayland clients may have only DISPLAY. They still belong to the
+        # current Wayland desktop and must never get an independent XInput timer.
+        current = wayland_scope(os.environ)
+        if current and self.display and self.display == os.environ.get('DISPLAY'):
+            return current
+        return self.display
 
     @property
     def names(self):
@@ -79,6 +91,16 @@ class Process:
     def worker_names(self):
         # Match individual tokens, never an arbitrary substring of a command.
         return self.names | {Path(arg).name for arg in self.argv[1:]}
+
+
+def wayland_scope(env):
+    name = env.get('WAYLAND_DISPLAY')
+    if not name:
+        return None
+    path = Path(name)
+    if not path.is_absolute():
+        path = Path(env.get('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}')) / path
+    return 'wayland:' + os.path.normpath(path)
 
 
 def process_snapshot():
@@ -102,13 +124,17 @@ def process_snapshot():
                 env = path.joinpath('environ').read_bytes().split(b'\0')
             except PermissionError:
                 env = []
-            display = next((os.fsdecode(v[8:]) for v in env if v.startswith(b'DISPLAY=')), '')
+            desktop = {os.fsdecode(k): os.fsdecode(v) for entry in env if b'=' in entry
+                       for k, v in [entry.split(b'=', 1)]
+                       if k in (b'DISPLAY', b'WAYLAND_DISPLAY', b'XDG_RUNTIME_DIR')}
+            display = desktop.get('DISPLAY', '')
             try:
                 exe = os.readlink(path / 'exe').removesuffix(' (deleted)')
             except PermissionError:
                 exe = argv[0]
             pid = int(path.name)
-            found[pid] = Process(pid, int(fields[1]), int(fields[19]), argv, exe, display)
+            found[pid] = Process(pid, int(fields[1]), int(fields[19]), argv, exe, display,
+                                 wayland_scope(desktop) or '')
         except (FileNotFoundError, ProcessLookupError, PermissionError):
             continue
     return found
@@ -123,7 +149,7 @@ def app_families(processes, policy, display=None):
     """Root selection is explicit; all owned descendants belong to that family."""
     candidates, bundles = {}, {}
     for pid, proc in processes.items():
-        if not proc.display or (display is not None and proc.display != display):
+        if not proc.scope or (display is not None and proc.scope != display):
             continue
         if matches(policy.suspend, proc.names):
             candidates[pid] = 'list'
@@ -398,6 +424,43 @@ class Session:
             self.process.stdout.close()
 
 
+class CompositorIdle(Idle):
+    """The compositor, not a local timer, owns Wayland inactivity."""
+    inactive = False
+
+    def activity(self):
+        self.inactive = False
+        super().activity()
+
+    def timeout(self):
+        return 0 if self.inactive and not self.paused else None
+
+
+class WaylandSession(Session):
+    def __init__(self, display, identity, seconds, playing, send):
+        self.display, self.identity = display, identity
+        self.idle = CompositorIdle(seconds, lambda name: send(name, display, playing), label=f'Apps on {display}')
+        self.ready, self.buffer = False, b''
+        self.process = subprocess.Popen(
+            [sys.executable, str(Path(__file__).with_name('wayland_idle.py')),
+             display.removeprefix('wayland:'), str(round(seconds * 1000))], stdout=subprocess.PIPE)
+
+    def feed(self, data):
+        self.buffer += data
+        lines = self.buffer.split(b'\n')
+        self.buffer = lines.pop()
+        if len(self.buffer) > 64:
+            raise ValueError('Oversized Wayland idle event')
+        for line in lines:
+            if line == b'active':
+                self.idle.activity()
+            elif line == b'idle':
+                self.idle.inactive = True
+            else:
+                raise ValueError('Invalid Wayland idle event')
+            self.ready = True
+
+
 def displays():
     found = {}
     for path in XSOCKETS.glob('X*'):
@@ -420,14 +483,22 @@ def watch(seconds, policy=None):
     media_ready = not policy.needs_media
     media_buffer = b''
     worker_fds = {}
+    wayland = wayland_scope(os.environ)
+    if wayland:
+        path = Path(wayland.removeprefix('wayland:'))
+        if not path.exists() or not stat.S_ISSOCK(path.stat().st_mode):
+            raise RuntimeError(f'WAYLAND_DISPLAY does not identify a live socket: {path}')
     libc = ctypes.CDLL(None, use_errno=True)
     notify = libc.inotify_init1(os.O_NONBLOCK | os.O_CLOEXEC)
     if notify < 0:
         raise OSError(ctypes.get_errno(), 'inotify_init1')
     try:
         # Session creation/removal/rename. No timer polls for new displays.
-        if libc.inotify_add_watch(notify, os.fsencode(XSOCKETS), 0x100 | 0x200 | 0x80 | 0x40) < 0:
-            raise OSError(ctypes.get_errno(), 'Cannot watch X display sockets')
+        if XSOCKETS.exists():
+            if libc.inotify_add_watch(notify, os.fsencode(XSOCKETS), 0x100 | 0x200 | 0x80 | 0x40) < 0:
+                raise OSError(ctypes.get_errno(), 'Cannot watch X display sockets')
+        elif not wayland:
+            raise RuntimeError('No X11 sockets or WAYLAND_DISPLAY; start from your graphical session')
         with selectors.DefaultSelector() as selector:
             selector.register(notify, selectors.EVENT_READ)
             # Restarting automatic mode first releases any previous suspension.
@@ -458,13 +529,22 @@ def watch(seconds, policy=None):
 
             def refresh():
                 current = displays()
+                if wayland:
+                    current.pop(os.environ.get('DISPLAY'), None)
+                    try:
+                        info = Path(wayland.removeprefix('wayland:')).stat()
+                        if stat.S_ISSOCK(info.st_mode):
+                            current[wayland] = (info.st_dev, info.st_ino)
+                    except FileNotFoundError:
+                        pass
                 for display, session in list(sessions.items()):
                     if current.get(display) != session.identity:
                         disconnect(session)
                         del sessions[display]
                 for display, identity in current.items():
                     if display not in sessions:
-                        session = Session(display, identity, seconds, playing, send)
+                        session_type = WaylandSession if display == wayland else Session
+                        session = session_type(display, identity, seconds, playing, send)
                         sessions[display] = session
                         selector.register(session.process.stdout, selectors.EVENT_READ, session)
                         print(f'Watching display {display}', flush=True)
@@ -472,7 +552,8 @@ def watch(seconds, policy=None):
             refresh()
             while True:
                 live = [s for s in sessions.values() if s.ready and not s.process.stdout.closed]
-                deadlines = [s.idle.timeout() for s in live if media_ready and not s.idle.paused]
+                deadlines = [timeout for s in live if media_ready
+                             if (timeout := s.idle.timeout()) is not None]
                 ready = selector.select(min(deadlines, default=None))
                 if any(key.fd == notify for key, _ in ready):
                     os.read(notify, 65536)
@@ -519,7 +600,7 @@ def watch(seconds, policy=None):
                     try:
                         data = os.read(key.fd, 65536)
                         if not data:
-                            raise EOFError('XInput connection ended')
+                            raise EOFError('Desktop idle connection ended')
                         session.feed(data)
                     except (OSError, EOFError, ValueError) as error:
                         disconnect(session)
@@ -619,7 +700,7 @@ def main():
         print('PID\tDISPLAY\tAPP\tPROCESSES\tIDLE DECISION')
         for root, members, source in app_families(process_snapshot(), policy):
             reason = exemption(root, members, policy, playing)
-            print(f'{root.pid}\t{root.display}\t{Path(root.argv[0]).name}\t{len(members)}\t'
+            print(f'{root.pid}\t{root.scope}\t{Path(root.argv[0]).name}\t{len(members)}\t'
                   f'{"keep: " + reason if reason else "suspend"} ({source})')
         return 0
     if args.action != 'run':

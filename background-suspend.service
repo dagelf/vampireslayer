@@ -1,5 +1,5 @@
 [Unit]
-Description=Suspend idle browser and Electron app families per X11/VNC display
+Description=Suspend idle browser and Electron app families on X11/VNC and Wayland
 
 [Service]
 Type=simple

@@ -1,9 +1,38 @@
 # background-suspend
 
 Suspend browser and Electron process families after 15 minutes without real input
-on their X11/VNC display. Activity resumes that display's apps. This retains the
+on their X11/VNC display or Wayland session. Activity resumes that session's apps. This retains the
 original per-display idle model: it does not suspend an unfocused app while you
-are using another app on the same display. XTEST-generated input is ignored.
+are using another app on the same display. XTEST-generated input is ignored on
+X11; on Wayland, the compositor decides which activity resets its idle counter.
+
+## Desktop detection
+
+No backend setting is needed. If `WAYLAND_DISPLAY` is set, connect to that socket
+and detect the available API:
+
+- **Hyprland, Sway, KDE, and other supporting compositors:** use
+  [`ext-idle-notify`](https://gitlab.freedesktop.org/wayland/wayland-protocols/-/blob/main/staging/ext-idle-notify/ext-idle-notify-v1.xml)
+  through the system `libwayland-client.so.0`. No additional daemon, package,
+  build step, raw input access, or polling is needed.
+- **GNOME/Mutter:** when the protocol is absent, use its
+  [IdleMonitor D-Bus API](https://github.com/GNOME/mutter/blob/main/data/dbus-interfaces/org.gnome.Mutter.IdleMonitor.xml).
+  Verify that the service belongs to the connected compositor before using it.
+- **X11/VNC:** retain XInput watching on each independent X server. The current
+  Wayland session's XWayland display is excluded from XInput watching, so native
+  and XWayland apps share one authoritative idle state.
+
+Native Wayland apps no longer need `DISPLAY`. Other VNC displays remain independent.
+The exported `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`, and `DISPLAY` identify the current
+Wayland session and its XWayland server. Launch independent X11/VNC sessions with
+`WAYLAND_DISPLAY` unset so they do not inherit the host session's identity.
+
+Version 2 of the Wayland protocol supplies input-only idle notifications, allowing
+our per-app media policy to work independently of compositor idle inhibitors.
+Version 1 is supported but honors compositor inhibitors; those may prevent idle
+notifications even with `--suspend-media`. There is no universal raw-input API
+across all Wayland compositors. Unsupported APIs, disconnects, and seat removal
+leave the affected apps resumed; restart the watcher after restoring the session.
 
 ## Defaults and exceptions
 
@@ -19,8 +48,8 @@ editing its policy. Patterns are case-insensitive shell globs, not regular expre
 | `worker_exceptions` | `false`: opt in to preserving apps with matching background workers. |
 | `background_workers` | Configurable process/argument-token patterns for Node, builds, language servers, explicit worker scripts, transfers, and headless jobs. Used only when worker exceptions are enabled. |
 
-App roots need a `DISPLAY`; all their owned descendant processes follow their
-policy, including helpers without a `DISPLAY`. A standalone Node/Bun/Deno server
+App roots need a `DISPLAY` or `WAYLAND_DISPLAY`; all their owned descendant processes follow their
+policy, including helpers without either variable. A standalone Node/Bun/Deno server
 is not selected merely because it runs JavaScript. Add its executable to `suspend`
 explicitly if wanted. The controller's own ancestor family is always protected.
 
@@ -40,8 +69,10 @@ be reliably classified from OS process names; use an app ignore rule for those.
 
 ## Commands
 
-Requires Linux pidfds, Python 3.11+, `python3-dbus`, `python3-gi`, `xinput`, and
-`stdbuf`. No browser extension or remote-debugging port is required.
+Requires Linux pidfds and Python 3.11+. X11 watching uses `xinput` and `stdbuf`;
+Wayland watching uses the compositor's existing `libwayland-client`. Media
+monitoring and the Mutter fallback use `python3-dbus` and `python3-gi`.
+Only the needed backend is started. No browser extension or remote-debugging port is required.
 
 ```sh
 ./background-suspend list                         # Read-only app/decision preview
@@ -84,13 +115,26 @@ systemctl --user daemon-reload
 The supplied unit assumes the checkout is `~/vampireslayer`; adjust its paths if
 you move it. Do not run both watchers on the same displays.
 
+On Wayland, the user service needs the same session variables as applications.
+Desktop session managers often import them already. If yours does not, run this
+from the compositor's session-start hook before starting/restarting the service:
+
+```sh
+systemctl --user import-environment WAYLAND_DISPLAY DISPLAY XDG_RUNTIME_DIR
+```
+
+An unset `DISPLAY` is fine on a native-only session. Run directly from a Wayland
+terminal with `./background-suspend run` to use its environment without systemd.
+
 ## Verification
 
 ```sh
-PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -m unittest -v test_background_suspend
+PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -m unittest -v test_background_suspend test_wayland_idle
 ```
 
 Tests use disposable app-named Python processes, synthetic input connections, and
 a private D-Bus session. They cover family selection, media state changes, stale
 replies, ignore precedence, media overrides, worker exits, PID reuse, and cleanup
-after monitoring failure. They do not suspend desktop apps.
+after monitoring failure. Wayland tests exercise the real client library with a
+private protocol peer, compositor-authoritative state, and a private Mutter API
+service. They do not suspend desktop apps. A live Wayland desktop is not required.

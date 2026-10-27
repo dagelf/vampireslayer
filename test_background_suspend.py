@@ -25,6 +25,12 @@ sys.modules[spec.name] = app
 loader.exec_module(app)
 
 
+def x11_test_env(display):
+    env = {**os.environ, 'DISPLAY': display}
+    env.pop('WAYLAND_DISPLAY', None)
+    return env
+
+
 # Only test process families on a synthetic display can receive signals.
 WATCH_TEST_CODE = '''
 import os, signal, sys, tempfile
@@ -52,8 +58,9 @@ with tempfile.TemporaryDirectory() as directory:
 '''
 
 class Lines:
-    def __init__(self, pipe):
+    def __init__(self, pipe, decode=json.loads):
         self.pipe, self.buffer = pipe, b''
+        self.decode = decode
 
     def read(self):
         deadline = time.monotonic() + 5
@@ -66,7 +73,7 @@ class Lines:
                 raise AssertionError('Subprocess ended unexpectedly')
             self.buffer += data
         line, self.buffer = self.buffer.split(b'\n', 1)
-        return json.loads(line)
+        return self.decode(line)
 
 
 def fake_player():
@@ -172,7 +179,7 @@ print(json.dumps([os.getpid(), child]), flush=True)
 signal.pause()
 '''
         proc = subprocess.Popen([name, '-c', code], executable=sys.executable,
-                                env={**os.environ, 'DISPLAY': display}, stdout=subprocess.PIPE)
+                                env=x11_test_env(display), stdout=subprocess.PIPE)
         root, child = Lines(proc.stdout).read()
 
         def cleanup():
@@ -323,7 +330,7 @@ class WorkerWatchTests(unittest.TestCase):
         editor = self.browser(display, 'code', 'node')
         other = self.browser(display, 'chromium')
         watcher = subprocess.Popen([sys.executable, '-c', WATCH_TEST_CODE],
-                                   env={**os.environ, 'DISPLAY': display,
+                                   env={**x11_test_env(display),
                                         'TEST_WORKERS': '1', 'TEST_NO_MEDIA': '1'},
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
@@ -380,7 +387,7 @@ class MediaBusTests(unittest.TestCase):
 
     def test_watcher_failure_resumes_idle_browsers(self):
         display = f':test-watch-{os.getpid()}'
-        env = {**os.environ, 'DISPLAY': display}
+        env = x11_test_env(display)
         player, output = self.start_process(
             ['firefox', __file__, '--fake-player', '--playing'], executable=sys.executable, env=env)
         pid = output.read()

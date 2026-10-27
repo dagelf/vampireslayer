@@ -1,5 +1,5 @@
 # Executable basenames, case-insensitive shell globs. Entire process families
-# follow the app root. A DISPLAY is required; standalone servers are not targets.
+# follow the app root. DISPLAY or WAYLAND_DISPLAY identifies its desktop session.
 suspend = [
   "firefox", "firefox-esr", "librewolf", "waterfox*", "floorp", "zen", "zen-browser",
   "chromium", "chromium-browser", "chrome", "google-chrome*", "opera*",
