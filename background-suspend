@@ -1,0 +1,647 @@
+#!/usr/bin/python3
+"""Suspend idle browser and Electron app families on each X11/VNC display.
+
+Configure defaults and exceptions in background-suspend.toml. Only MPRIS Playing
+counts as media playback. XTEST input is ignored; input contents are never stored.
+Requires Python 3.11+, python3-dbus, python3-gi, xinput, and Linux pidfds.
+"""
+import argparse
+import ctypes
+from dataclasses import dataclass
+from fnmatch import fnmatchcase
+import json
+import os
+from pathlib import Path
+import re
+import select
+import selectors
+import signal
+import stat
+import subprocess
+import sys
+import time
+import tomllib
+
+SERVICE = 'background-suspend.service'
+XSOCKETS = Path('/tmp/.X11-unix')
+CONFIG = Path(__file__).resolve().with_suffix('.toml')
+
+
+def matches(patterns, names):
+    return any(fnmatchcase(name.lower(), pattern.lower()) for name in names for pattern in patterns)
+
+
+@dataclass
+class Policy:
+    suspend: list
+    ignore: list
+    suspend_media: list
+    background_workers: list
+    detect_electron: bool = True
+    worker_exceptions: bool = False
+
+    @property
+    def needs_media(self):
+        return '*' not in self.suspend_media
+
+
+def load_policy(path=CONFIG):
+    with Path(path).open('rb') as stream:
+        data = tomllib.load(stream)
+    allowed = set(Policy.__dataclass_fields__)
+    if data.keys() - allowed:
+        raise ValueError(f'Unknown config keys: {sorted(data.keys() - allowed)}')
+    for key in ('suspend', 'ignore', 'suspend_media', 'background_workers'):
+        value = data.get(key, [])
+        if not isinstance(value, list) or any(not isinstance(p, str) or not p.strip() for p in value):
+            raise ValueError(f'{key} must be a list of nonempty glob patterns')
+        data[key] = value
+    for key in ('detect_electron', 'worker_exceptions'):
+        if key in data and type(data[key]) is not bool:
+            raise ValueError(f'{key} must be true or false')
+    return Policy(**data)
+
+
+@dataclass
+class Process:
+    pid: int
+    ppid: int
+    started: int
+    argv: tuple
+    exe: str
+    display: str
+
+    @property
+    def names(self):
+        return {Path(self.exe).name, Path(self.argv[0]).name}
+
+    @property
+    def worker_names(self):
+        # Match individual tokens, never an arbitrary substring of a command.
+        return self.names | {Path(arg).name for arg in self.argv[1:]}
+
+
+def process_snapshot():
+    """One owned-process snapshot per transition, including non-browser children."""
+    found = {}
+    for path in Path('/proc').iterdir():
+        if not path.name.isdigit():
+            continue
+        try:
+            if path.stat().st_uid != os.getuid():
+                continue
+            fields = path.joinpath('stat').read_text().rsplit(')', 1)[1].split()
+            if fields[0] in ('Z', 'X'):
+                continue
+            argv = tuple(os.fsdecode(a) for a in path.joinpath('cmdline').read_bytes().split(b'\0') if a)
+            if not argv:
+                continue
+            # Sandboxed children may hide environ/exe even from the same UID.
+            # Keep their PPID membership; only selecting a root needs DISPLAY.
+            try:
+                env = path.joinpath('environ').read_bytes().split(b'\0')
+            except PermissionError:
+                env = []
+            display = next((os.fsdecode(v[8:]) for v in env if v.startswith(b'DISPLAY=')), '')
+            try:
+                exe = os.readlink(path / 'exe').removesuffix(' (deleted)')
+            except PermissionError:
+                exe = argv[0]
+            pid = int(path.name)
+            found[pid] = Process(pid, int(fields[1]), int(fields[19]), argv, exe, display)
+        except (FileNotFoundError, ProcessLookupError, PermissionError):
+            continue
+    return found
+
+
+def electron_bundle(exe):
+    directory = Path(exe).parent / 'resources'
+    return any((directory / name).is_file() for name in ('app.asar', 'electron.asar'))
+
+
+def app_families(processes, policy, display=None):
+    """Root selection is explicit; all owned descendants belong to that family."""
+    candidates, bundles = {}, {}
+    for pid, proc in processes.items():
+        if not proc.display or (display is not None and proc.display != display):
+            continue
+        if matches(policy.suspend, proc.names):
+            candidates[pid] = 'list'
+        elif policy.detect_electron:
+            if proc.exe not in bundles:
+                bundles[proc.exe] = electron_bundle(proc.exe)
+            if bundles[proc.exe]:
+                candidates[pid] = 'electron bundle'
+    roots = {}
+
+    def root_for(pid):
+        chain, seen = [], set()
+        cursor = pid
+        while cursor in processes and cursor not in roots and cursor not in seen:
+            chain.append(cursor)
+            seen.add(cursor)
+            cursor = processes[cursor].ppid
+        root = roots.get(cursor)
+        for child in reversed(chain):
+            if root is None and child in candidates:
+                root = child
+            roots[child] = root
+        return roots.get(pid)
+
+    families = {}
+    for pid in processes:
+        root = root_for(pid)
+        if root is not None:
+            families.setdefault(root, []).append(processes[pid])
+    return [(processes[root], members, candidates[root]) for root, members in families.items()]
+
+
+def exemption(root, members, policy, playing):
+    """Ignore wins, then controller safety, worker policy, and media policy."""
+    names = set().union(*(p.names for p in members))
+    if matches(policy.ignore, names):
+        return 'ignored'
+    if any(p.pid == os.getpid() for p in members):
+        return 'controller'
+    if policy.worker_exceptions and any(matches(policy.background_workers, p.worker_names) for p in members):
+        return 'background worker'
+    if not matches(policy.suspend_media, root.names):
+        if playing is None:
+            return 'media unknown'
+        if any(p.pid in playing for p in members):
+            return 'playing'
+    return None
+
+
+def pin(proc):
+    """Check start time after opening a pidfd, before signalling the identity."""
+    fd = os.pidfd_open(proc.pid)
+    try:
+        fields = Path(f'/proc/{proc.pid}/stat').read_text().rsplit(')', 1)[1].split()
+        if int(fields[19]) != proc.started:
+            raise ProcessLookupError('Process identity changed')
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def app_signal(name, display=None, playing=None, policy=None, worker_watch=None):
+    policy = policy if policy is not None else load_policy()
+    for root, members, _ in app_families(process_snapshot(), policy, display):
+        reason = exemption(root, members, policy, playing)
+        if reason in ('ignored', 'controller'):
+            continue
+        if name == 'SIGSTOP' and reason == 'background worker' and worker_watch is not None:
+            for proc in members:
+                if matches(policy.background_workers, proc.worker_names):
+                    worker_watch(proc)
+        sig = signal.SIGCONT if name == 'SIGCONT' or reason else signal.SIGSTOP
+        # Stop the root first to limit new children during the transition.
+        for proc in sorted(members, key=lambda p: p.pid != root.pid):
+            try:
+                fd = pin(proc)
+            except (FileNotFoundError, ProcessLookupError, PermissionError):
+                continue
+            try:
+                signal.pidfd_send_signal(fd, sig)
+            except ProcessLookupError:
+                pass
+            finally:
+                os.close(fd)
+
+
+def media_watch():
+    """Stream Playing PIDs on changes; isolate D-Bus I/O from input handling."""
+    import dbus
+    from dbus.mainloop.glib import DBusGMainLoop
+    from gi.repository import GLib
+
+    DBusGMainLoop(set_as_default=True)
+    bus = dbus.SessionBus()
+    daemon = dbus.Interface(bus.get_object('org.freedesktop.DBus', '/org/freedesktop/DBus'),
+                            'org.freedesktop.DBus')
+    loop = GLib.MainLoop()
+    prefix = 'org.mpris.MediaPlayer2.'
+    interface = 'org.mpris.MediaPlayer2.Player'
+    players = {}
+    last = object()
+    failed = False
+    starting = True
+
+    def publish():
+        nonlocal last
+        if starting or failed:
+            return
+        active = (None if any(p['status'] is None for p in players.values()) else
+                  sorted({p['pid'] for p in players.values() if p['status'] == 'Playing'}))
+        if active != last:
+            print(json.dumps(active), flush=True)
+            last = active
+
+    def fail(error):
+        nonlocal failed
+        print(f'Media monitoring failed: {error}', file=sys.stderr, flush=True)
+        failed = True
+        loop.quit()
+
+    def query(name, player):
+        # A later signal/removal must win over an outstanding property query.
+        generation = player['generation'] = player['generation'] + 1
+
+        def current():
+            return players.get(name) is player and player['generation'] == generation
+
+        def reply(status):
+            if current():
+                if status not in ('Playing', 'Paused', 'Stopped'):
+                    fail(f'Unexpected playback status: {status}')
+                    return
+                player['status'] = str(status)
+                publish()
+
+        def error(exc):
+            if current():
+                fail(exc)
+
+        obj = bus.get_object(player['owner'], '/org/mpris/MediaPlayer2', introspect=False)
+        obj.Get(interface, 'PlaybackStatus', dbus_interface='org.freedesktop.DBus.Properties',
+                reply_handler=reply, error_handler=error, timeout=3)
+
+    def owner_changed(name, old, new):
+        if not name.startswith(prefix):
+            return
+        players.pop(name, None)
+        if new:
+            try:
+                pid = int(daemon.GetConnectionUnixProcessID(new, timeout=3))
+                player = dict(owner=str(new), pid=pid, status=None, generation=0)
+                players[name] = player
+                query(name, player)
+            except dbus.DBusException as error:
+                fail(error)
+        publish()
+
+    def properties_changed(iface, changed, invalidated, sender=None):
+        if iface != interface:
+            return
+        for name, player in list(players.items()):
+            if player['owner'] != sender:
+                continue
+            if 'PlaybackStatus' in changed:
+                status = str(changed['PlaybackStatus'])
+                if status not in ('Playing', 'Paused', 'Stopped'):
+                    fail(f'Unexpected playback status: {status}')
+                    return
+                player['generation'] += 1
+                player['status'] = status
+            elif 'PlaybackStatus' in invalidated:
+                player['status'] = None
+                query(name, player)
+        publish()
+
+    bus.add_signal_receiver(owner_changed, signal_name='NameOwnerChanged',
+                            dbus_interface='org.freedesktop.DBus')
+    bus.add_signal_receiver(properties_changed, signal_name='PropertiesChanged',
+                            dbus_interface='org.freedesktop.DBus.Properties',
+                            path='/org/mpris/MediaPlayer2', sender_keyword='sender')
+    bus.call_on_disconnection(lambda _bus: fail('Session bus disconnected'))
+    for name in bus.list_names():
+        if name.startswith(prefix):
+            try:
+                owner_changed(name, '', bus.get_name_owner(name))
+            except dbus.DBusException as error:
+                if error.get_dbus_name() != 'org.freedesktop.DBus.Error.NameHasNoOwner':
+                    raise
+    starting = False
+    publish()
+    if not failed:
+        loop.run()
+    return 1
+
+
+class Idle:
+    """Own the deadline and paused state; only transitions send signals."""
+    def __init__(self, seconds, send=app_signal, clock=time.monotonic, label='Apps'):
+        self.seconds, self.send, self.clock = seconds, send, clock
+        self.label = label
+        self.last_input = clock()
+        self.paused = False
+
+    def activity(self):
+        self.last_input = self.clock()
+        self.resume()
+
+    def resume(self):
+        if self.paused:
+            self.send('SIGCONT')
+            self.paused = False
+            print(f'{self.label} resumed', flush=True)
+
+    def timeout(self):
+        return None if self.paused else max(0, self.seconds - (self.clock() - self.last_input))
+
+    def expire(self):
+        if not self.paused and self.timeout() == 0:
+            self.paused = True  # Cleanup must resume even if signalling fails.
+            self.send('SIGSTOP')
+            print(f'{self.label} idle; eligible app families paused', flush=True)
+
+    def media_changed(self):
+        if self.paused:
+            self.send('SIGSTOP')  # Reconcile exemptions without resetting input time.
+
+
+class Session:
+    """One X server connection owns one display's idle state."""
+    def __init__(self, display, identity, seconds, playing, send):
+        self.display, self.identity = display, identity
+        self.idle = Idle(seconds, lambda name: send(name, display, playing), label=f'Apps on {display}')
+        self.buffer, self.xtest, self.raw = b'', set(), False
+        self.ready = False
+        self.process = subprocess.Popen(
+            ['stdbuf', '-oL', 'xinput', 'test-xi2', '--root'], stdout=subprocess.PIPE,
+            env={**os.environ, 'DISPLAY': display, 'LC_ALL': 'C'})
+
+    def feed(self, data):
+        self.buffer += data
+        lines = self.buffer.split(b'\n')
+        self.buffer = lines.pop()
+        if len(self.buffer) > 65536:
+            raise ValueError('Oversized XInput event line')
+        active = False
+        for raw in lines:
+            line = raw.decode('utf-8', errors='replace').strip()
+            device = re.search(r'\bid=(\d+)', line)
+            if device:
+                self.ready = True
+                if 'XTEST' in line:
+                    self.xtest.add(int(device[1]))
+            elif line.startswith('EVENT type '):
+                self.raw = bool(re.search(r'\(Raw(?:Key|Button|Motion|Touch)', line))
+            elif self.raw and line.startswith('device:'):
+                source = re.fullmatch(r'device:\s+\d+\s+\((\d+)\)', line)
+                active |= source is not None and int(source[1]) not in self.xtest
+                self.raw = False
+        if active:
+            self.idle.activity()  # Once per received batch, without storing input.
+
+    def close(self):
+        self.idle.activity()  # A lost X connection must leave this browser usable.
+        if not self.process.stdout.closed:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait()
+            self.process.stdout.close()
+
+
+def displays():
+    found = {}
+    for path in XSOCKETS.glob('X*'):
+        match = re.fullmatch(r'X([0-9]{1,5})', path.name)
+        try:
+            if match:
+                info = path.stat()
+                if stat.S_ISSOCK(info.st_mode):
+                    found[f':{match[1]}'] = (info.st_dev, info.st_ino)
+        except FileNotFoundError:
+            pass
+    return found
+
+
+def watch(seconds, policy=None):
+    policy = policy if policy is not None else load_policy()
+    sessions = {}
+    playing = set()
+    media = None
+    media_ready = not policy.needs_media
+    media_buffer = b''
+    worker_fds = {}
+    libc = ctypes.CDLL(None, use_errno=True)
+    notify = libc.inotify_init1(os.O_NONBLOCK | os.O_CLOEXEC)
+    if notify < 0:
+        raise OSError(ctypes.get_errno(), 'inotify_init1')
+    try:
+        # Session creation/removal/rename. No timer polls for new displays.
+        if libc.inotify_add_watch(notify, os.fsencode(XSOCKETS), 0x100 | 0x200 | 0x80 | 0x40) < 0:
+            raise OSError(ctypes.get_errno(), 'Cannot watch X display sockets')
+        with selectors.DefaultSelector() as selector:
+            selector.register(notify, selectors.EVENT_READ)
+            # Restarting automatic mode first releases any previous suspension.
+            app_signal('SIGCONT', policy=policy)
+            if policy.needs_media:
+                media = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), 'media-watch'],
+                                         stdout=subprocess.PIPE)
+                selector.register(media.stdout, selectors.EVENT_READ, 'media')
+
+            def watch_worker(proc):
+                identity = (proc.pid, proc.started)
+                if identity not in worker_fds:
+                    try:
+                        fd = pin(proc)
+                    except (FileNotFoundError, ProcessLookupError):
+                        return
+                    worker_fds[identity] = fd
+                    selector.register(fd, selectors.EVENT_READ, ('worker', identity))
+
+            def send(name, display, playing):
+                app_signal(name, display, playing, policy, watch_worker)
+
+
+            def disconnect(session):
+                if not session.process.stdout.closed:
+                    selector.unregister(session.process.stdout)
+                session.close()
+
+            def refresh():
+                current = displays()
+                for display, session in list(sessions.items()):
+                    if current.get(display) != session.identity:
+                        disconnect(session)
+                        del sessions[display]
+                for display, identity in current.items():
+                    if display not in sessions:
+                        session = Session(display, identity, seconds, playing, send)
+                        sessions[display] = session
+                        selector.register(session.process.stdout, selectors.EVENT_READ, session)
+                        print(f'Watching display {display}', flush=True)
+
+            refresh()
+            while True:
+                live = [s for s in sessions.values() if s.ready and not s.process.stdout.closed]
+                deadlines = [s.idle.timeout() for s in live if media_ready and not s.idle.paused]
+                ready = selector.select(min(deadlines, default=None))
+                if any(key.fd == notify for key, _ in ready):
+                    os.read(notify, 65536)
+                    refresh()
+                    continue  # Discard events from replaced server connections.
+                for key, _ in ready:
+                    if isinstance(key.data, tuple) and key.data[0] == 'worker':
+                        selector.unregister(key.fd)
+                        os.close(worker_fds.pop(key.data[1]))
+                        for session in live:
+                            if not session.process.stdout.closed:
+                                session.idle.media_changed()
+                        continue
+                    if key.data == 'media':
+                        data = os.read(key.fd, 65536)
+                        if not data:
+                            raise RuntimeError('Media watcher ended; automatic suspension disabled')
+                        media_buffer += data
+                        lines = media_buffer.split(b'\n')
+                        media_buffer = lines.pop()
+                        if len(media_buffer) > 65536:
+                            raise ValueError('Oversized media update')
+                        if lines:
+                            pids = parse_media(lines[-1])
+                            if pids is None:
+                                # Unknown is not Playing. Wait for a valid snapshot,
+                                # releasing suspensions without extending idle time.
+                                media_ready = False
+                                for session in live:
+                                    if not session.process.stdout.closed:
+                                        session.idle.resume()
+                                continue
+                            changed = playing != set(pids)
+                            playing.clear()
+                            playing.update(pids)
+                            media_ready = True
+                            if changed:
+                                print(f'Media-playing app PIDs: {sorted(playing)}', flush=True)
+                                for session in live:
+                                    if not session.process.stdout.closed:
+                                        session.idle.media_changed()
+                        continue
+                    session = key.data
+                    try:
+                        data = os.read(key.fd, 65536)
+                        if not data:
+                            raise EOFError('XInput connection ended')
+                        session.feed(data)
+                    except (OSError, EOFError, ValueError) as error:
+                        disconnect(session)
+                        print(f'{session.display}: {error}; resumed. Restart service to reconnect.', flush=True)
+                for session in live:
+                    if media_ready and not session.process.stdout.closed:
+                        session.idle.expire()
+    finally:
+        for session in sessions.values():
+            session.close()
+        os.close(notify)
+        for fd in worker_fds.values():
+            os.close(fd)
+        if media is not None:
+            media.terminate()
+            try:
+                media.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                media.kill()
+                media.wait()
+            media.stdout.close()
+
+
+def media_snapshot():
+    """Bounded read-only snapshot for inspect/gaming; watch uses the event stream."""
+    process = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), 'media-watch'],
+                               stdout=subprocess.PIPE)
+    deadline, buffer = time.monotonic() + 5, b''
+    try:
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0 or not select.select([process.stdout], [], [], left)[0]:
+                raise RuntimeError('Media status timed out; no apps suspended')
+            data = os.read(process.stdout.fileno(), 65536)
+            if not data:
+                raise RuntimeError('Media watcher ended; no apps suspended')
+            buffer += data
+            lines = buffer.split(b'\n')
+            buffer = lines.pop()
+            if len(buffer) > 65536:
+                raise ValueError('Oversized media update')
+            for line in lines:
+                pids = parse_media(line)
+                if pids is not None:
+                    return set(pids)
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+        process.stdout.close()
+
+
+def parse_media(line):
+    pids = json.loads(line)
+    if pids is not None and (not isinstance(pids, list) or
+                            any(type(p) is not int or p <= 0 for p in pids)):
+        raise ValueError('Invalid media PID list')
+    return pids
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('action', choices=('start', 'stop', 'status', 'gaming', 'run', 'resume', 'list', 'media-watch'), nargs='?', default='status')
+    parser.add_argument('--minutes', type=int, default=15, help='Idle threshold for run (default: 15)')
+    parser.add_argument('--config', type=Path, default=CONFIG, help='Policy TOML (default: beside script)')
+    parser.add_argument('--ignore', action='append', default=[], metavar='GLOB', help='Add an ignore pattern')
+    parser.add_argument('--suspend-media', nargs='?', const='*', action='append', default=[], metavar='GLOB',
+                        help='Suspend even with media, for GLOB or all apps when omitted')
+    parser.add_argument('--worker-exceptions', action='store_true', help='Enable configured background-worker exceptions')
+    args = parser.parse_args()
+    if args.minutes <= 0:
+        parser.error('--minutes must be positive')
+    if args.action == 'media-watch':
+        return media_watch()
+    if args.action in ('start', 'stop', 'status') and (
+            args.ignore or args.suspend_media or args.worker_exceptions or args.config != CONFIG or args.minutes != 15):
+        parser.error('Service controls use its installed unit and config; use policy options with run/list/gaming/resume')
+    try:
+        policy = load_policy(args.config)
+    except (OSError, ValueError) as error:
+        parser.error(str(error))
+    policy.ignore.extend(args.ignore)
+    policy.suspend_media.extend(args.suspend_media)
+    policy.worker_exceptions |= args.worker_exceptions
+    if args.action == 'resume':
+        app_signal('SIGCONT', policy=policy)
+        return 0
+    if args.action == 'list':
+        try:
+            playing = media_snapshot() if policy.needs_media else set()
+        except RuntimeError as error:
+            print(error, file=sys.stderr)
+            playing = None
+        print('PID\tDISPLAY\tAPP\tPROCESSES\tIDLE DECISION')
+        for root, members, source in app_families(process_snapshot(), policy):
+            reason = exemption(root, members, policy, playing)
+            print(f'{root.pid}\t{root.display}\t{Path(root.argv[0]).name}\t{len(members)}\t'
+                  f'{"keep: " + reason if reason else "suspend"} ({source})')
+        return 0
+    if args.action != 'run':
+        command = {'start': ['enable', '--now'], 'stop': ['disable', '--now'],
+                   'status': ['status', '--no-pager'], 'gaming': ['stop']}[args.action]
+        result = subprocess.call(['systemctl', '--user', *command, SERVICE])
+        if result == 0 and args.action != 'status':
+            if args.action == 'gaming':
+                playing = media_snapshot() if policy.needs_media else set()
+                app_signal('SIGSTOP', playing=playing, policy=policy)
+            else:
+                app_signal('SIGCONT', policy=policy)
+        return result
+
+    def stop(_signum, _frame):
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    watch(args.minutes * 60, policy)
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

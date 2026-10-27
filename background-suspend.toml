@@ -1,0 +1,38 @@
+# Executable basenames, case-insensitive shell globs. Entire process families
+# follow the app root. A DISPLAY is required; standalone servers are not targets.
+suspend = [
+  "firefox", "firefox-esr", "librewolf", "waterfox*", "floorp", "zen", "zen-browser",
+  "chromium", "chromium-browser", "chrome", "google-chrome*", "opera*",
+  "brave", "brave-browser*", "vivaldi*", "microsoft-edge*", "msedge*",
+  "electron", "electron[0-9]*", "nw", "nwjs",
+  "code", "code-insiders", "codium", "vscodium", "cursor", "windsurf",
+  "antigravity", "qoder", "trae", "atom", "pulsar",
+  "slack", "discord*", "vesktop", "signal-desktop", "teams-for-linux",
+  "ms-teams", "element-desktop", "beeper*", "ferdium", "franz", "rambox",
+  "obsidian", "notion", "notion-app", "joplin", "joplin-desktop", "logseq",
+  "standard-notes", "simplenote", "postman", "insomnia", "figma-linux",
+  "github-desktop", "gitkraken", "beekeeper-studio", "mongodb-compass",
+  "bitwarden", "1password", "drawio", "balena-etcher", "etcher",
+]
+
+# Detect renamed Electron executables next to resources/app.asar or electron.asar.
+detect_electron = true
+
+# Always keep these app families running, including in gaming mode.
+# Matching any member protects the entire family. Example: ["code", "slack"].
+ignore = []
+
+# Playing media protects every app by default. Override for named app roots,
+# e.g. ["chromium", "chrome", "discord*"], or ["*"] to suspend even with media.
+suspend_media = []
+
+# Optional background-work exceptions. OFF by default. When enabled, a matching
+# process/argument token keeps its whole app family awake until that process exits.
+# These are process-lifetime hints, not a measurement of whether a worker is busy.
+worker_exceptions = false
+background_workers = [
+  "node", "nodejs", "bun", "deno", "npm", "npx", "pnpm", "yarn",
+  "*language-server*", "tsserver.js", "*worker*.js", "*worker*.mjs",
+  "make", "ninja", "cmake", "cargo", "rustc", "gcc", "g++", "clang*",
+  "ffmpeg", "rsync", "--headless", "--headless=*",
+]

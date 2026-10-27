@@ -1,0 +1,11 @@
+[Unit]
+Description=Suspend idle browser and Electron app families per X11/VNC display
+
+[Service]
+Type=simple
+ExecStart=%h/vampireslayer/background-suspend run --minutes 15
+ExecStopPost=%h/vampireslayer/background-suspend resume
+TimeoutStopSec=5
+
+[Install]
+WantedBy=default.target
