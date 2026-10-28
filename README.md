@@ -72,7 +72,7 @@ icon_style = "nosferatu"
 
 Save and cycle the mode to apply the icon setting. Existing configs without this
 key use Nosferatu. All six designs have Watching, Gaming and Suspended poses.
-The [icon review gallery](docs/icon-review.html) shows the numbered designs.
+The [icon review gallery](https://github.com/dagelf/vampireslayer/blob/master/docs/icon-review.html) shows the numbered designs.
 
 Color sprites are optional, using Omarchy's standard widget setting:
 
@@ -396,9 +396,9 @@ The repository is licensed under [MIT](LICENSE).
 
 On an Omarchy installation, `python3 tests/qml_smoke.py` exercises mode cycling
 and editor gestures in a private offscreen shell with a fake backend.
-Live VNC validation is recorded in [validation notes](docs/VALIDATION.md).
+Live VNC validation is recorded in [validation notes](https://github.com/dagelf/vampireslayer/blob/master/docs/VALIDATION.md).
 
-See [artwork notes](docs/ARTWORK.md) for the banner’s generation prompt and marketplace references.
+See [artwork notes](https://github.com/dagelf/vampireslayer/blob/master/docs/ARTWORK.md) for the banner’s generation prompt and marketplace references.
 
 PS This Plugin just packaged my normal arch tooling, check [utils](https://github.com/dagelf/utils), in tribute to DHH's Lex Fridman podcast.
 

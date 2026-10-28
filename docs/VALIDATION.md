@@ -33,3 +33,19 @@ The editor test verifies exclusive first creation, file permissions, preserving 
 Qt 6 static lint found no syntax errors in the plugin. The available host linter reports metadata warnings when reading the guest's newer Quickshell type descriptions; real QML loading and interaction were therefore verified using the guest's Quickshell runtime and the live Omarchy shell.
 
 Battery savings are workload-dependent and were not benchmarked. Optional foreground-only suspension is a roadmap item, not part of these checks.
+
+## Icon selection and archive packaging (2026-10-28)
+
+Nosferatu is the monochrome default. TOML icon selection was checked for existing configs without the key, all six supported styles, invalid or partially written values, and recovery after a valid save. The QML smoke test verifies the default sprite data, the service-to-widget setting, and changes on a subsequent mode transition. All 18 shipped poses match the chosen gallery pixels exactly; the real QML renderer was also visually checked at 16 and 64 pixels.
+
+`.gitattributes` excludes tests, development Markdown, the review gallery and repository housekeeping files from Git archives. Runtime scripts, QML, `icons.json`, defaults, README, license and README images remain available. README links to development material point to GitHub so they also work from an exported package. Normal Git clones retain the full source tree.
+
+To inspect a release package after committing changes:
+
+```sh
+git archive --format=tar --output=/tmp/vampireslayer-package.tar HEAD
+tar -tf /tmp/vampireslayer-package.tar
+package_dir=$(mktemp -d)
+tar -xf /tmp/vampireslayer-package.tar -C "$package_dir"
+omarchy plugin validate "$package_dir"
+```

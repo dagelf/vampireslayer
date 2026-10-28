@@ -1,0 +1,6 @@
+# Keep development material in Git; omit it from archive-based installations.
+/tests export-ignore
+/docs/*.md export-ignore
+/docs/icon-review.html export-ignore
+/.gitignore export-ignore
+/.gitattributes export-ignore
