@@ -8,6 +8,7 @@ Item {
     property var manifest: null
     readonly property string controller: decodeURIComponent(Qt.resolvedUrl("plugin-service").toString().replace(/^file:\/\//, ""))
     property string mode: "suspended"
+    property string iconStyle: "nosferatu"
     property string activeState: "unknown"
     property string error: ""
     property bool initialized: false
@@ -33,6 +34,7 @@ Item {
             const state = JSON.parse(line);
             if (!["watching", "gaming", "suspended"].includes(state.mode)) throw new Error("Invalid mode");
             mode = state.mode;
+            iconStyle = typeof state.iconStyle === "string" ? state.iconStyle : "nosferatu";
             activeState = state.activeState;
             if (!initialized) {
                 initialized = true;
@@ -76,7 +78,7 @@ Item {
         function watching(): string { return root.setMode("watching"); }
         function suspended(): string { return root.setMode("suspended"); }
         function edit(): void { root.editConfig(); }
-        function status(): string { return JSON.stringify({mode: root.mode, activeState: root.activeState, busy: root.busy, error: root.error}); }
+        function status(): string { return JSON.stringify({mode: root.mode, iconStyle: root.iconStyle, activeState: root.activeState, busy: root.busy, error: root.error}); }
     }
     Component.onDestruction: Quickshell.execDetached(["systemctl", "--user", "stop", "vampireslayer.service"])
 }

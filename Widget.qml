@@ -54,6 +54,7 @@ BarWidget {
             width: Math.max(16, Math.floor((root.barSize - 8) / 16) * 16)
             height: width
             mode: root.mode
+            iconStyle: root.service ? root.service.iconStyle : "nosferatu"
             colorful: root.setting("colorIcons", false)
             foreground: root.bar ? root.bar.foreground : "white"
             opacity: root.service && root.service.busy ? 0.5 : 1

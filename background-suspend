@@ -40,6 +40,7 @@ class Policy:
     background_workers: list
     detect_electron: bool = True
     worker_exceptions: bool = False
+    icon_style: str = 'nosferatu'
 
     @property
     def needs_media(self):
@@ -60,6 +61,8 @@ def load_policy(path=CONFIG):
     for key in ('detect_electron', 'worker_exceptions'):
         if key in data and type(data[key]) is not bool:
             raise ValueError(f'{key} must be true or false')
+    if 'icon_style' in data and not isinstance(data['icon_style'], str):
+        raise ValueError('icon_style must be a string')
     return Policy(**data)
 
 

@@ -1,3 +1,9 @@
+# Bar icon: nosferatu (02, default), widows-peak (03), crescent-bat (08),
+# sleeping-screen (18), night-candle (19), or fanged-skull (20).
+# Save and cycle the plugin mode to apply. Monochrome remains the default;
+# the optional colorIcons setting is controlled through Omarchy's bar settings.
+icon_style = "nosferatu"
+
 # Executable basenames, case-insensitive shell globs. Entire process families
 # follow the app root. DISPLAY or WAYLAND_DISPLAY identifies its desktop session.
 suspend = [

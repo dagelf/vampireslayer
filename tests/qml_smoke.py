@@ -6,7 +6,7 @@ omarchy=Path(os.environ.get('OMARCHY_PATH', '/usr/share/omarchy'))
 quickshell=os.environ.get('QUICKSHELL', 'quickshell')
 with tempfile.TemporaryDirectory(prefix='vampire-qml-') as directory:
  root=Path(directory)
- for name in ['Service.qml','Widget.qml','PixelVampire.qml']:
+ for name in ['Service.qml','Widget.qml','PixelVampire.qml','icons.json']:
   shutil.copy2(source/name,root/name)
  os.mkfifo(root/'events')
  (root/'runtime').mkdir(mode=0o700)
@@ -17,13 +17,13 @@ from pathlib import Path
 root=Path(__file__).parent
 mode=sys.argv[1]
 if mode=='observe':
- print(json.dumps({'mode':'watching','activeState':'active'}),flush=True)
+ print(json.dumps({'mode':'watching','activeState':'active','iconStyle':'crescent-bat'}),flush=True)
  with os.fdopen(os.open(root/'events',os.O_RDWR),'r') as events:
   for line in events: print(line.strip(),flush=True)
 else:
  with (root/'actions').open('a') as log: log.write(mode+'\\n')
  if mode!='edit-config':
-  with (root/'events').open('w') as stream: stream.write(json.dumps({'mode':mode,'activeState':'inactive' if mode=='suspended' else 'active'})+'\\n')
+  with (root/'events').open('w') as stream: stream.write(json.dumps({'mode':mode,'activeState':'inactive' if mode=='suspended' else 'active','iconStyle':'night-candle'})+'\\n')
 ''')
  (root/'shell.qml').write_text('''import QtQuick
 import Quickshell
@@ -33,20 +33,28 @@ ShellRoot {
  property int ticks: 0
  function check(value, message) { if (!value) { console.error("TEST FAILURE:", message); Qt.exit(1); } }
  Service { id: service }
+ PixelVampire { id: defaultIcon; visible: false }
  QtObject { id: facade; function serviceFor(id) { return service; } }
  FloatingWindow {
   visible: true; implicitWidth: 200; implicitHeight: 100
   Widget { id: widget; shell: facade; anchors.centerIn: parent }
  }
  function button() { for (let i=0;i<widget.children.length;i++) if (typeof widget.children[i].triggerPress === "function") return widget.children[i]; return null; }
+ function icon() { const children=button().children; for (let i=0;i<children.length;i++) if (typeof children[i].iconStyle === "string") return children[i]; return null; }
  Timer {
   interval: 50; running: true; repeat: true
   onTriggered: {
    root.ticks++;
    if (root.ticks > 150) { root.check(false,"timed out at step " + root.step + " " + service.error); return; }
    if (!service.initialized || service.busy) return;
-   if (root.step === 0) { root.check(service.mode === "watching","initial mode"); service.cycle(); root.step=1; }
-   else if (root.step === 1 && service.mode === "gaming") { service.cycle(); root.step=2; }
+   if (root.step === 0) {
+    root.check(service.mode === "watching","initial mode");
+    root.check(defaultIcon.iconStyle === "nosferatu" && !defaultIcon.colorful,"default icon is monochrome Nosferatu");
+    root.check(defaultIcon.poses.watching.length === 16,"default sprites loaded");
+    root.check(icon().iconStyle === "crescent-bat" && icon().poses.watching.length === 16,"configured icon reaches widget");
+    service.cycle(); root.step=1;
+   }
+   else if (root.step === 1 && service.mode === "gaming") { root.check(icon().iconStyle === "night-candle","icon follows updated status"); service.cycle(); root.step=2; }
    else if (root.step === 2 && service.mode === "suspended") { service.cycle(); root.step=3; }
    else if (root.step === 3 && service.mode === "watching") { root.check(!!root.button(),"button exists"); root.button().triggerPress(Qt.LeftButton); root.button().triggerPress(Qt.LeftButton); root.step=4; delay.start(); }
    else if (root.step === 5 && service.mode === "gaming") { root.check(service.setMode("invalid") === "invalid mode","invalid mode rejected"); console.log("PASS: QML mode cycle, double-click edit without cycling, single-click gaming"); Qt.quit(); }

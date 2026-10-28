@@ -19,6 +19,26 @@ loader.exec_module(service)
 
 
 class PluginTests(unittest.TestCase):
+    def test_icon_config_defaults_choices_and_recovery(self):
+        from test_background_suspend import app
+        with tempfile.TemporaryDirectory() as directory, \
+             mock.patch.dict(os.environ, {'XDG_CONFIG_HOME': directory}):
+            self.assertEqual(service.icon_style(), 'nosferatu')
+            path = service.user_config()
+            path.parent.mkdir(parents=True)
+            path.write_text('ignore = []\n')  # Existing configs need no migration.
+            self.assertEqual(service.icon_style(), 'nosferatu')
+            self.assertEqual(app.load_policy(path).icon_style, 'nosferatu')
+            for style in service.ICON_STYLES:
+                path.write_text(f'icon_style = "{style}"\n')
+                self.assertEqual(service.icon_style(), style)
+                self.assertEqual(app.load_policy(path).icon_style, style)
+            for invalid in ('icon_style = "typo"', 'icon_style = []', 'icon_style = "unfinished'):
+                path.write_text(invalid)
+                self.assertEqual(service.icon_style(), 'nosferatu')
+            path.write_text('icon_style = "fanged-skull"\n')
+            self.assertEqual(service.icon_style(), 'fanged-skull')
+
     def test_manifest_and_opening(self):
         manifest = json.loads((ROOT / 'manifest.json').read_text())
         self.assertEqual(manifest['id'], 'dagelf.vampireslayer')

@@ -62,7 +62,7 @@
   <h1>Choose your night watch.</h1>
   <p class="intro">20 alternatives, drawn on a 16 × 16 pixel grid. Monochrome first. Compare Watching, Gaming and Suspended, then select a design to try it in the sample bar.</p>
   <div class="reference">
-    <div><div class="eyebrow">Currently shipping</div><strong>The original caped vampire</strong><p>Monochrome is the default. Color is an optional widget setting.</p></div>
+    <div><div class="eyebrow">Original reference</div><strong>The original caped vampire</strong><p>The earlier icon, before this study. Monochrome remains the default.</p></div>
     <div class="states" id="reference"></div>
   </div>
   <div class="toolbar">
@@ -71,7 +71,7 @@
     <label><input id="color" type="checkbox">Color preview</label>
     <label><input id="grid-lines" type="checkbox">Pixel grid</label>
   </div>
-  <div class="section-label"><span>20 candidates</span><span>WATCHING · GAMING · SUSPENDED</span></div>
+  <div class="section-label"><span>20 candidates · 02 is the default</span><span>WATCHING · GAMING · SUSPENDED</span></div>
   <div class="grid" id="gallery"></div>
   <details>
     <summary>Commands for the current icon</summary>
@@ -81,7 +81,7 @@
   </details>
 </main>
 <footer class="footer"><div class="footer-inner">
-  <div class="selection">Selected <strong id="selection-name">01 · Little Count</strong><br><span id="mode-name">Watching</span></div>
+  <div class="selection">Selected <strong id="selection-name">02 · Nosferatu</strong><br><span id="mode-name">Watching</span></div>
   <div class="bar"><span>1&nbsp; <span style="opacity:.4">2&nbsp; 3</span></span><div class="bar-right"><span>♫</span><button id="bar-icon" aria-label="Cycle preview mode"></button><span>12:34</span></div></div>
   <button id="copy">Copy choice</button><span id="notice" role="status" class="selection"></span>
 </div></footer>
@@ -148,7 +148,7 @@ const designs=[
   ['Fanged Skull','A sharper gothic-game silhouette.',(p,m)=>{p.r(4,2,8,10);p.r(2,4,12,6);p.r(5,12,6,2);p.r(4,5,3,3,'.');p.r(9,5,3,3,'.');p.r(7,9,2,1,'.');p.r(6,11,4,2,'.');p.r(5,12,1,3);p.r(10,12,1,3);if(m==='suspended'){p.r(4,5,3,3);p.r(9,5,3,3);p.r(4,6,3,1,'.');p.r(9,6,3,1,'.');}if(m==='gaming'){p.r(4,5,1,1);p.r(11,5,1,1);}}]
 ];
 function pixels(index,mode) { const p=canvas(); designs[index][2](p,mode);return p.a; }
-let selected=0,mode=0;
+let selected=1,mode=0;
 const ns='http://www.w3.org/2000/svg';
 function svg(a,size,grid=false) {
   const el=document.createElementNS(ns,'svg');el.setAttribute('viewBox','0 0 16 16');el.setAttribute('width',size);el.setAttribute('height',size);el.setAttribute('aria-hidden','true');

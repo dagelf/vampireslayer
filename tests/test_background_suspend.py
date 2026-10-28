@@ -300,7 +300,7 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(app.exemption(root, [root, controller], app.load_policy(), set()), 'controller')
 
     def test_bad_config_and_media_snapshots_fail_validation(self):
-        for value in ('ignore = "chrome"', 'worker_exceptions = 1', 'suspend = [false]', 'typo = true'):
+        for value in ('ignore = "chrome"', 'worker_exceptions = 1', 'suspend = [false]', 'typo = true', 'icon_style = false'):
             with self.subTest(value=value), tempfile.NamedTemporaryFile(mode='w') as file:
                 file.write(value)
                 file.flush()

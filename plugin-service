@@ -5,11 +5,30 @@ import os
 import json
 from pathlib import Path
 import subprocess
+import tomllib
 
 ROOT = Path(__file__).resolve().parent
 UNIT = 'vampireslayer.service'
 ENVIRONMENT = ('DISPLAY', 'WAYLAND_DISPLAY', 'XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS',
                'XDG_CURRENT_DESKTOP', 'XDG_SESSION_TYPE', 'XAUTHORITY', 'XDG_CONFIG_HOME')
+ICON_STYLES = json.loads((ROOT / 'icons.json').read_text())
+
+
+def user_config():
+    return Path(os.environ.get('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'vampireslayer/background-suspend.toml'
+
+
+def icon_style():
+    path = user_config()
+    if not path.exists():
+        path = ROOT / 'background-suspend.toml'
+    try:
+        with path.open('rb') as stream:
+            value = tomllib.load(stream).get('icon_style', 'nosferatu')
+        return value if isinstance(value, str) and value in ICON_STYLES else 'nosferatu'
+    except (OSError, ValueError):
+        # A partially saved policy must not interrupt reporting actual unit state.
+        return 'nosferatu'
 
 
 def unit_quote(value):
@@ -30,9 +49,8 @@ def service_command(root=ROOT, env=os.environ, mode="watching"):
 
 
 def edit_config():
-    directory = Path(os.environ.get('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'vampireslayer'
-    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-    path = directory / 'background-suspend.toml'
+    path = user_config()
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     default_config = (ROOT / 'background-suspend.toml').read_text()
     try:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -73,6 +91,7 @@ def observe():
             if error.get_dbus_name() not in (name + '.NoSuchUnit', 'org.freedesktop.DBus.Error.UnknownObject'):
                 raise
             state = {'mode': 'suspended', 'activeState': 'inactive'}
+        state['iconStyle'] = icon_style()
         if state != last:
             print(json.dumps(state), flush=True)
             last = state

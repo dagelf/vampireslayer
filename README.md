@@ -31,7 +31,7 @@ no browser extension, and no second Quickshell instance.
 ## One vampire, three modes
 
 Click the vampire in your bar to cycle **Watching → Gaming → Suspended → Watching**.
-The monochrome pixel glyph changes pose with the mode and follows your bar's theme.
+The default monochrome **Nosferatu** glyph changes pose with the mode and follows your bar's theme.
 Hover for the current state, what it does, and the next action.
 
 | Mode | What happens |
@@ -54,6 +54,25 @@ the editor without switching modes. Single-click waits for the desktop's
 double-click interval; a hotkey mode change is immediate. Omarchy's selected editor
 opens, defaulting to Neovim in a terminal. The first edit creates a personal copy;
 existing settings are never overwritten.
+
+Choose a sprite in `~/.config/vampireslayer/background-suspend.toml`:
+
+```toml
+icon_style = "nosferatu"
+```
+
+| Gallery option | `icon_style` | Design |
+| --- | --- | --- |
+| 02 (default) | `nosferatu` | Nosferatu |
+| 03 | `widows-peak` | Widow’s Peak |
+| 08 | `crescent-bat` | Crescent Bat |
+| 18 | `sleeping-screen` | Sleeping Screen |
+| 19 | `night-candle` | Night Candle |
+| 20 | `fanged-skull` | Fanged Skull |
+
+Save and cycle the mode to apply the icon setting. Existing configs without this
+key use Nosferatu. All six designs have Watching, Gaming and Suspended poses.
+The [icon review gallery](docs/icon-review.html) shows the numbered designs.
 
 Color sprites are optional, using Omarchy's standard widget setting:
 

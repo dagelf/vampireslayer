@@ -6,7 +6,7 @@ The current banner shows the vampire secretly typing at his CRT while the hunter
 
 `docs/omarchy-watching.png` is an unedited screenshot of the live Omarchy/Hyprland VNC test, showing the monochrome icon and its operational tooltip. The desktop wallpaper belongs to the installed Omarchy theme.
 
-The bar uses the hand-authored 16-pixel glyphs in `PixelVampire.qml`, monochrome by default. `colorIcons` is an optional Omarchy widget setting. No animations or idle redraw timer run.
+The bar uses the hand-authored 16-pixel glyphs in `icons.json`, rendered by `PixelVampire.qml`, monochrome by default. Nosferatu (gallery option 02) is the default; options 03, 08, 18, 19 and 20 are selectable with `icon_style` in the TOML. The selected pixels are copied exactly from [the icon review gallery](icon-review.html). `colorIcons` is an optional Omarchy widget setting. No animations or idle redraw timer run.
 
 Visual references reviewed from the Omarchy marketplace: Navbar Cat's pixel sprite card, Sky Map's dark illustrated panel, and Top 5 Apps Bar's compact screenshot. These informed the layout and presentation. See [the marketplace](https://plugins.omarchy.org/) and its [development guide](https://plugins.omarchy.org/develop.html).
 

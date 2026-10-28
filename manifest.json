@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "dagelf.vampireslayer",
   "name": "Vampire Slayer",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": "dagelf",
   "license": "MIT",
   "description": "Chrome or Firefox eating CPU while you're out for lunch, even when they have nothing to do? Vampire Slayer to the rescue. Background browser and app idle suspend for Omarchy, Hyprland, Wayland and X11. Gaming mode, media exemptions, ignore lists and optional worker exceptions. Save power and extend battery life while detected media and allowed apps keep running. Double-click to edit TOML; bind Hyprland hotkeys. Brought to you by dagelf.",
